@@ -57,9 +57,25 @@ graph TD
     A -- "Provides initial state" --> G
 ```
 
-## 3. Proposed Project Structure
+### Architecture Component Mapping
 
-To maintain modularity and separation from the existing codebase, the new components will reside in a dedicated directory.
+The components in the architecture diagram above map to the following files and development tasks:
+
+| Diagram ID | Component Name        | Implementation File(s)                | Development Task(s) |
+| :--------: | :-------------------- | :------------------------------------ | :------------------ |
+|     A      | Physics Engine        | `CartPole/` (Existing)                | Pre-existing        |
+|     B      | Data Collector        | `learning/world_model_trainer.py`     | T3.2                |
+|     C      | World Model Interface | `world_models/base_world_model.py`    | T1.2                |
+|     D      | WM Trainer            | `learning/world_model_trainer.py`     | T3.2                |
+|     E      | SNN World Model       | `world_models/snn_world_model.py`     | T3.1                |
+|     F      | Environment Wrapper   | `world_models/environment_wrapper.py` | T1.3                |
+|     G      | AC Trainer            | `learning/actor_critic_trainer.py`    | T2.2, T2.4          |
+|     H      | Actor-Critic Agent    | `agents/actor_critic_agent.py`        | T2.1, T2.3          |
+|    I, J    | SNN Actor/Critic      | `agents/actor_critic_agent.py`        | T2.3                |
+
+## 3. Project Structure
+
+To maintain modularity the project will have following structure:
 
 ```
 Neuromorphic_MBRL/
