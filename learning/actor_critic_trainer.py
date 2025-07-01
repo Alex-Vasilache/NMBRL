@@ -3,7 +3,7 @@
 # and apply the learning updates (e.g., using sparse RTRL) to the agent's networks.
 
 from Neuromorphic_MBRL.world_models.environment_wrapper import EnvironmentWrapper
-from Neuromorphic_MBRL.agents.actor_critic_agent import ActorCriticAgent
+from Neuromorphic_MBRL.agents.snn_actor_critic_agent import SnnActorCriticAgent
 
 
 class ActorCriticTrainer:
@@ -23,7 +23,7 @@ class ActorCriticTrainer:
 
         # The action space needs to be passed to the agent
         action_space = self.world_model.env.action_space
-        self.agent = ActorCriticAgent(action_space=action_space)
+        self.agent = SnnActorCriticAgent(action_space=action_space)
 
     def train(self):
         """

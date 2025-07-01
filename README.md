@@ -70,8 +70,8 @@ The components in the architecture diagram above map to the following files and 
 |     E      | SNN World Model       | `world_models/snn_world_model.py`     | T3.1                |
 |     F      | Environment Wrapper   | `world_models/environment_wrapper.py` | T1.3                |
 |     G      | AC Trainer            | `learning/actor_critic_trainer.py`    | T2.2, T2.4          |
-|     H      | Actor-Critic Agent    | `agents/actor_critic_agent.py`        | T2.1, T2.3          |
-|    I, J    | SNN Actor/Critic      | `agents/actor_critic_agent.py`        | T2.3                |
+|     H      | Actor-Critic Agent    | `agents/snn_actor_critic_agent.py`    | T2.1                |
+|    I, J    | SNN Actor/Critic      | `agents/snn_actor_critic_agent.py`    | T2.1                |
 
 ## 3. Project Structure
 
@@ -81,7 +81,6 @@ To maintain modularity the project will have following structure:
 Neuromorphic_MBRL/
 ├── agents/
 │   ├── __init__.py
-│   ├── actor_critic_agent.py   # Defines the standard (ANN) actor-critic agent
 │   ├── snn_actor_critic_agent.py # Defines the SNN-based actor-critic agent
 │   └── base_agent.py           # Abstract base class for agents
 ├── world_models/
@@ -107,13 +106,12 @@ The project can be broken down into the following phases and tasks. This structu
 | **1. Foundation**          | T1.1    | **Create Project Structure:** Set up the directory and `__init__.py` files as outlined above.                                                                                                           | `Neuromorphic_MBRL/`                     | -                              |
 |                            | T1.2    | **Define Base Interfaces:** Create the abstract base classes `BaseWorldModel` and `BaseAgent`.                                                                                                          | `base_world_model.py`, `base_agent.py`   | T1.1                           |
 |                            | T1.3    | **Implement Environment Wrapper:** Create a concrete `WorldModel` by wrapping the existing `CartPole` simulation. This allows agent development to begin immediately.                                   | `environment_wrapper.py`                 | T1.2                           |
-| **2. Actor-Critic Module** | T2.1    | **Initial Actor-Critic Agent:** Implement an `ActorCriticAgent` with standard dense (non-spiking) networks (e.g., using TensorFlow/PyTorch).                                                            | `actor_critic_agent.py`                  | T1.2                           |
+| **2. Actor-Critic Module** | T2.1    | **Initial SNN Actor-Critic Agent:** Implement an `SnnActorCriticAgent` class with a basic SNN structure.                                                                                                | `snn_actor_critic_agent.py`              | T1.2                           |
 |                            | T2.2    | **Actor-Critic Trainer:** Create the training loop that has the agent interact with the `WorldModel` interface (using the `EnvironmentWrapper` for now).                                                | `actor_critic_trainer.py`, `run_mbrl.py` | T1.3, T2.1                     |
-|                            | T2.3    | **Neuromorphic Agent:** Create a new `SnnActorCriticAgent` class with SNN-based networks.                                                                                                               | `snn_actor_critic_agent.py`              | T1.2                           |
-|                            | T2.4    | **Implement Sparse RTRL:** Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                    | `actor_critic_trainer.py`                | T2.2, T2.3                     |
+|                            | T2.3    | **Implement Sparse RTRL:** Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                    | `actor_critic_trainer.py`                | T2.2                           |
 | **3. World Model Module**  | T3.1    | **SNN World Model:** Implement the `SNNWorldModel` class. Initially, this can be a simple recurrent SNN architecture.                                                                                   | `snn_world_model.py`                     | T1.2                           |
 |                            | T3.2    | **World Model Trainer:** Implement the training loop for the `SNNWorldModel`. It should sample data from the real environment and train the SNN to predict `(s', r) = f(s, a)`.                         | `world_model_trainer.py`                 | `environment_wrapper.py`, T3.1 |
-| **4. Integration**         | T4.1    | **Full Pipeline Integration:** Update `run_mbrl.py` to run both training modules. The `ActorCriticTrainer` should be configured to use the trained `SNNWorldModel` instead of the `EnvironmentWrapper`. | `run_mbrl.py`                            | T2.4, T3.2                     |
+| **4. Integration**         | T4.1    | **Full Pipeline Integration:** Update `run_mbrl.py` to run both training modules. The `ActorCriticTrainer` should be configured to use the trained `SNNWorldModel` instead of the `EnvironmentWrapper`. | `run_mbrl.py`                            | T2.3, T3.2                     |
 |                            | T4.2    | **Parallel Execution:** Refactor the training loops to run concurrently, with the agent training on the latest version of the world model.                                                              | `run_mbrl.py`, `*_trainer.py`            | T4.1                           |
 
 ## 5. Task Dependencies
@@ -130,14 +128,11 @@ graph TD;
     end
 
     subgraph "Phase 2: Actor-Critic Module (Parallel)"
-        T2_1["T2.1<br/>Initial Actor-Critic Agent"];
+        T2_1["T2.1<br/>Initial SNN Actor-Critic Agent"];
         T2_2["T2.2<br/>Actor-Critic Trainer"];
-        T2_3["T2.3<br/>Neuromorphic Agent"];
-        T2_4["T2.4<br/>Implement Sparse RTRL"];
+        T2_3["T2.3<br/>Implement Sparse RTRL"];
         T2_1 --> T2_2;
-        T2_1 --> T2_3;
-        T2_2 --> T2_4;
-        T2_3 --> T2_4;
+        T2_2 --> T2_3;
     end
     
     subgraph "Phase 3: World Model Module (Parallel)"
@@ -158,6 +153,6 @@ graph TD;
     T1_2 --> T3_1;
     T1_3 --> T3_2;
     
-    T2_4 --> T4_1;
+    T2_3 --> T4_1;
     T3_2 --> T4_1;
 ```
