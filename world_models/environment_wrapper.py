@@ -60,10 +60,10 @@ class EnvironmentWrapper(BaseWorldModel):
         )
 
         # Assign reward
-        if not terminated:
-            reward = 1.0
-        else:
-            reward = 0.0
+        # For a swingup task, reward should be based on the pole's angle.
+        # We use the cosine of the angle, which is conveniently in state[2].
+        # We scale it to be in the [0, 1] range.
+        reward = (state[2] + 1.0) / 2.0
 
         # The 'info' dictionary is not used for now
         info = {}
