@@ -24,31 +24,31 @@ These two modules interact through a well-defined `WorldModel` interface, allowi
 ```mermaid
 graph TD
     subgraph "Real Environment"
-        A[Physics Engine /<br/> CartPole]
+        A["A: Physics Engine /<br/> CartPole"]
     end
 
     subgraph "Module 1: World Model"
         direction LR
-        B(Data Collector) -- "Collects (s, a, s', r)" --> A
-        C{World Model Interface}
-        B -- "Provides data" --> D[WM Trainer]
-        D -- "Updates" --> E[SNN World Model]
+        B("B: Data Collector") -- "Collects (s, a, s', r)" --> A
+        C{"C: World Model Interface"}
+        B -- "Provides data" --> D["D: WM Trainer"]
+        D -- "Updates" --> E["E: SNN World Model"]
         
         subgraph "WM Implementations"
             direction TB
-            F[Environment Wrapper] -- "Implements" --> C
+            F["F: Environment Wrapper"] -- "Implements" --> C
             E -- "Implements" --> C
         end
     end
     
     subgraph "Module 2: Actor-Critic"
         direction LR
-        G[AC Trainer] -- "Uses" --> C
-        G -- "Updates" --> H{Actor-Critic Agent}
+        G["G: AC Trainer"] -- "Uses" --> C
+        G -- "Updates" --> H{"H: Actor-Critic Agent"}
         H -- "Provides actions" --> C
         subgraph "Agent Networks"
-            I[SNN Actor]
-            J[SNN Critic]
+            I["I: SNN Actor"]
+            J["J: SNN Critic"]
         end
         H -- "Contains" --> I
         H -- "Contains" --> J
