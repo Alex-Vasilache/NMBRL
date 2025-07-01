@@ -81,7 +81,8 @@ To maintain modularity the project will have following structure:
 Neuromorphic_MBRL/
 ├── agents/
 │   ├── __init__.py
-│   ├── actor_critic_agent.py   # Defines the agent, its networks, and learning rule
+│   ├── actor_critic_agent.py   # Defines the standard (ANN) actor-critic agent
+│   ├── snn_actor_critic_agent.py # Defines the SNN-based actor-critic agent
 │   └── base_agent.py           # Abstract base class for agents
 ├── world_models/
 │   ├── __init__.py
@@ -108,7 +109,7 @@ The project can be broken down into the following phases and tasks. This structu
 |                            | T1.3    | **Implement Environment Wrapper:** Create a concrete `WorldModel` by wrapping the existing `CartPole` simulation. This allows agent development to begin immediately.                                   | `environment_wrapper.py`                 | T1.2                           |
 | **2. Actor-Critic Module** | T2.1    | **Initial Actor-Critic Agent:** Implement an `ActorCriticAgent` with standard dense (non-spiking) networks (e.g., using TensorFlow/PyTorch).                                                            | `actor_critic_agent.py`                  | T1.2                           |
 |                            | T2.2    | **Actor-Critic Trainer:** Create the training loop that has the agent interact with the `WorldModel` interface (using the `EnvironmentWrapper` for now).                                                | `actor_critic_trainer.py`, `run_mbrl.py` | T1.3, T2.1                     |
-|                            | T2.3    | **Neuromorphic Agent:** Replace the dense actor and critic networks with SNNs.                                                                                                                          | `actor_critic_agent.py`                  | T2.1                           |
+|                            | T2.3    | **Neuromorphic Agent:** Create a new `SnnActorCriticAgent` class with SNN-based networks.                                                                                                               | `snn_actor_critic_agent.py`              | T1.2                           |
 |                            | T2.4    | **Implement Sparse RTRL:** Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                    | `actor_critic_trainer.py`                | T2.2, T2.3                     |
 | **3. World Model Module**  | T3.1    | **SNN World Model:** Implement the `SNNWorldModel` class. Initially, this can be a simple recurrent SNN architecture.                                                                                   | `snn_world_model.py`                     | T1.2                           |
 |                            | T3.2    | **World Model Trainer:** Implement the training loop for the `SNNWorldModel`. It should sample data from the real environment and train the SNN to predict `(s', r) = f(s, a)`.                         | `world_model_trainer.py`                 | `environment_wrapper.py`, T3.1 |
