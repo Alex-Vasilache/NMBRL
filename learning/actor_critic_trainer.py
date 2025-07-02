@@ -28,7 +28,10 @@ class ActorCriticTrainer:
         :param config: A dictionary containing training parameters.
         """
         self.config = config
-        self.world_model = INICartPoleWrapper()
+        self.world_model = INICartPoleWrapper(
+            visualize=config.get("visualize", False),
+            dt_simulation=config.get("dt_simulation", 0.02)
+        )
 
         # Initialize the SNN agent
         action_space = self.world_model.env.action_space
@@ -249,6 +252,8 @@ class ActorCriticTrainer:
             print(f"Final Actor Loss: {final_losses['actor_loss']:.4f}")
             print(f"Final Critic Loss: {final_losses['critic_loss']:.4f}")
 
+        self.world_model.close()
+
     def evaluate(self, num_episodes=10):
         """
         Evaluate the trained agent without learning updates.
@@ -297,6 +302,8 @@ class ActorCriticTrainer:
             f"  Average Length: {np.mean(eval_lengths):.1f} ± {np.std(eval_lengths):.1f}"
         )
 
+        self.world_model.close()
+
         return eval_rewards, eval_lengths
 
 
@@ -305,20 +312,21 @@ if __name__ == "__main__":
     training_config = {
         "num_episodes": 50,
         "batch_size": 256,
-        "buffer_seq_length": 8,  # Sequence length for SNN training
+        "buffer_seq_length": 128,  # Sequence length for SNN training
         "update_frequency": 10,
         "learning_rate": 1e-3,
         "gamma": 0.99,
         "hidden_dim": 64,
         "snn_time_steps": 1,
-        "buffer_size": 1000,
-        "max_steps_per_episode": 500,
+        "max_steps_per_episode": 1000,
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 0.5,
+        "threshold": 0.75,
         "learn_alpha": True,
         "learn_beta": True,
         "learn_threshold": True,
+        "visualize": False,
+        "dt_simulation": 0.002,
     }
 
     trainer = ActorCriticTrainer(config=training_config)

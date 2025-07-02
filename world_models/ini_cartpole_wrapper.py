@@ -18,7 +18,13 @@ class INICartPoleWrapper(BaseWorldModel):
     """
 
     def __init__(
-        self, max_steps=1000, target_position=0.0, target_equilibrium=1.0, **kwargs
+        self,
+        max_steps=1000,
+        target_position=0.0,
+        target_equilibrium=1.0,
+        dt_simulation=0.02,
+        visualize=False,
+        **kwargs,
     ):
         """
         Initializes the INICartPoleWrapper.
@@ -26,6 +32,7 @@ class INICartPoleWrapper(BaseWorldModel):
         :param max_steps: Maximum number of steps before manual termination (default: 1000)
         :param target_position: Target position for the cart (default: 0.0)
         :param target_equilibrium: Target equilibrium scaling factor (default: 1.0)
+        :param visualize: If True, a window with the CartPole visualization will be opened (default: False)
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
         # This is a hacky way to ensure the imports from the submodule work,
@@ -43,6 +50,7 @@ class INICartPoleWrapper(BaseWorldModel):
             sys.path.insert(0, si_toolkit_src_path)
 
         from CartPole import CartPole as RealCartPole
+        from CartPole.cartpole_target_slider import TargetSlider
         from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX, ANGLE_IDX
         from CartPole.cartpole_parameters import TrackHalfLength
 
@@ -59,6 +67,8 @@ class INICartPoleWrapper(BaseWorldModel):
         try:
             # Initialize the "real" CartPole environment
             self.env = RealCartPole()
+            self.target_slider = TargetSlider()
+            self.env.target_slider = self.target_slider
 
             # Import and initialize the cost function
             from Control_Toolkit_ASF.Cost_Functions.CartPole.quadratic_boundary import (
@@ -91,9 +101,47 @@ class INICartPoleWrapper(BaseWorldModel):
         self.previous_action = 0.0
 
         # Set a default simulation timestep if not provided
-        self.env.dt_simulation = kwargs.get("dt_simulation", 0.02)
+        self.env.dt_simulation = dt_simulation
+
+        self.visualize = visualize
+        if self.visualize:
+            self._init_visualization()
 
         self.reset()
+
+    def _init_visualization(self):
+        """Initializes the visualization elements."""
+        import matplotlib.pyplot as plt
+        from CartPole.cartpole_drawer import CartPoleDrawer
+
+        self.fig, self.axes = plt.subplots(2, 1, figsize=(16, 10))
+        self.drawer = CartPoleDrawer(self.env, self.target_slider)
+        self.drawer.draw_constant_elements(self.fig, self.axes[0], self.axes[1])
+
+        # Manually add the patches for the cart, which is normally done in the animation init
+        self.axes[0].add_patch(self.drawer.Mast)
+        self.drawer.Mast.set_transform(self.drawer.t2 + self.axes[0].transData)
+        self.axes[0].add_patch(self.drawer.ZeroAngleTick)
+        self.drawer.ZeroAngleTick.set_transform(
+            self.drawer.t_zero_angle + self.axes[0].transData
+        )
+        self.axes[0].add_patch(self.drawer.Chassis)
+        self.axes[0].add_patch(self.drawer.WheelLeft)
+        self.axes[0].add_patch(self.drawer.WheelRight)
+        self.axes[0].add_patch(self.drawer.Acceleration_Arrow)
+
+        self.fig.show()
+
+    def _render(self):
+        """Renders the current state of the environment."""
+        if self.visualize:
+            self.drawer.update_drawing()
+            self.drawer.Mast.set_transform(self.drawer.t2 + self.axes[0].transData)
+            self.drawer.ZeroAngleTick.set_transform(
+                self.drawer.t_zero_angle + self.axes[0].transData
+            )
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
 
     def _compute_reward_from_cost(self, state, action):
         """
@@ -181,6 +229,10 @@ class INICartPoleWrapper(BaseWorldModel):
         # Get the new state
         state = self.env.s_with_noise_and_latency
 
+        # Render the environment if visualization is enabled
+        if self.visualize:
+            self._render()
+
         # Compute reward using the original quadratic boundary cost function
         reward, cost_info = self._compute_reward_from_cost(state, action_value)
 
@@ -209,4 +261,15 @@ class INICartPoleWrapper(BaseWorldModel):
         self.step_count = 0
         self.previous_action = 0.0
 
+        # Render the reset state
+        if self.visualize:
+            self._render()
+
         return self.env.s
+
+    def close(self):
+        """Closes the visualization window."""
+        if self.visualize:
+            import matplotlib.pyplot as plt
+
+            plt.close(self.fig)
