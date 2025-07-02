@@ -89,6 +89,9 @@ Neuromorphic_MBRL/
 │   ├── __init__.py
 │   ├── actor_critic_trainer.py # Training loop for the AC module
 │   └── world_model_trainer.py  # Training loop for the WM module
+├── testing/
+│   ├── test_ini_cartpole_wrapper.py # Tester for ini_cartpole_wrapper
+│   └── test_snn_actor_critic.py     # Tester for the actor critic networks
 ├── world_models/
 │   ├── __init__.py
 │   ├── ini_cartpole_wrapper.py # Wraps the existing environment to fit the WM interface

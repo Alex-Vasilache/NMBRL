@@ -2,7 +2,7 @@
 # It will manage the agent's interaction with the world model (real or learned),
 # and apply the learning updates (e.g., using sparse RTRL) to the agent's networks.
 
-from Neuromorphic_MBRL.world_models.environment_wrapper import EnvironmentWrapper
+from Neuromorphic_MBRL.world_models.ini_cartpole_wrapper import INICartPoleWrapper
 from Neuromorphic_MBRL.agents.snn_actor_critic_agent import SnnActorCriticAgent
 
 
@@ -19,7 +19,7 @@ class ActorCriticTrainer:
         :param config: A dictionary containing training parameters.
         """
         self.config = config
-        self.world_model = EnvironmentWrapper()
+        self.world_model = INICartPoleWrapper()
 
         # The action space needs to be passed to the agent
         action_space = self.world_model.env.action_space
