@@ -17,10 +17,15 @@ class INICartPoleWrapper(BaseWorldModel):
     interact with a learned world model.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self, max_steps=1000, target_position=0.0, target_equilibrium=1.0, **kwargs
+    ):
         """
         Initializes the INICartPoleWrapper.
 
+        :param max_steps: Maximum number of steps before manual termination (default: 1000)
+        :param target_position: Target position for the cart (default: 0.0)
+        :param target_equilibrium: Target equilibrium scaling factor (default: 1.0)
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
         # This is a hacky way to ensure the imports from the submodule work,
@@ -38,10 +43,13 @@ class INICartPoleWrapper(BaseWorldModel):
             sys.path.insert(0, si_toolkit_src_path)
 
         from CartPole import CartPole as RealCartPole
-        from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX
+        from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX, ANGLE_IDX
+        from CartPole.cartpole_parameters import TrackHalfLength
 
         self.POSITION_IDX = POSITION_IDX
         self.ANGLE_COS_IDX = ANGLE_COS_IDX
+        self.ANGLE_IDX = ANGLE_IDX
+        self.TrackHalfLength = TrackHalfLength
 
         # We need to change the CWD so that the environment can find its config files.
         # This is not ideal, but necessary given the structure of the submodule.
@@ -51,16 +59,109 @@ class INICartPoleWrapper(BaseWorldModel):
         try:
             # Initialize the "real" CartPole environment
             self.env = RealCartPole()
+
+            # Import and initialize the cost function
+            from Control_Toolkit_ASF.Cost_Functions.CartPole.quadratic_boundary import (
+                quadratic_boundary,
+            )
+            from SI_Toolkit.computation_library import NumpyLibrary
+            from types import SimpleNamespace
+
+            # Create variable parameters object to hold target values
+            variable_parameters = SimpleNamespace()
+            variable_parameters.target_position = target_position
+            variable_parameters.target_equilibrium = target_equilibrium
+
+            # Initialize the cost function with required parameters
+            self.cost_function = quadratic_boundary(variable_parameters, NumpyLibrary())
+
         finally:
             os.chdir(original_cwd)
 
-        # Define thresholds for termination
-        self.x_threshold = 2.4
+        # Manual termination parameters
+        self.max_steps = max_steps
+        self.step_count = 0
+
+        # Store target parameters for access
+        self.target_position = target_position
+        self.target_equilibrium = target_equilibrium
+
+        # Previous control input for jerk penalty
+        self.previous_action = 0.0
 
         # Set a default simulation timestep if not provided
         self.env.dt_simulation = kwargs.get("dt_simulation", 0.02)
 
         self.reset()
+
+    def _compute_reward_from_cost(self, state, action):
+        """
+        Convert the quadratic boundary cost to a reward using the original cost function.
+        Lower cost = higher reward.
+        """
+        # Reshape state and action for the cost function (expects batch dimensions)
+        state_batch = np.expand_dims(state, axis=0)  # Shape: (1, state_dim)
+        state_batch = np.expand_dims(state_batch, axis=0)  # Shape: (1, 1, state_dim)
+
+        action_batch = np.array([[[action]]])  # Shape: (1, 1, 1)
+
+        # Compute the stage cost using the original cost function
+        stage_cost = self.cost_function._get_stage_cost(
+            state_batch, action_batch, self.previous_action
+        )
+
+        # Extract scalar cost value
+        total_cost = float(stage_cost[0, 0])
+
+        # Convert cost to reward (negative cost)
+        reward = -total_cost
+
+        # For debugging, compute individual components with correct weights
+        try:
+            # Import the weight constants from the module
+            from Control_Toolkit_ASF.Cost_Functions.CartPole.quadratic_boundary import (
+                dd_weight,
+                ep_weight,
+                cc_weight,
+                ccrc_weight,
+                R,
+            )
+
+            # Get raw cost components (unweighted)
+            raw_dd_cost = float(
+                self.cost_function._distance_difference_cost(state[self.POSITION_IDX])
+            )
+            raw_ep_cost = float(self.cost_function._E_pot_cost(state[self.ANGLE_IDX]))
+            raw_cc_cost = float(self.cost_function._CC_cost(action_batch)[0, 0])
+
+            # Control change rate cost (if we have previous action)
+            raw_ccrc_cost = 0.0
+            if self.previous_action is not None:
+                raw_ccrc_cost = float(
+                    self.cost_function._control_change_rate_cost(
+                        action_batch, self.previous_action
+                    )[0, 0]
+                )
+
+            # Apply the weights from the config file to get weighted costs
+            weighted_dd_cost = dd_weight * raw_dd_cost
+            weighted_ep_cost = ep_weight * raw_ep_cost
+            weighted_cc_cost = cc_weight * raw_cc_cost
+            weighted_ccrc_cost = ccrc_weight * raw_ccrc_cost
+
+        except Exception as e:
+            # Fallback if individual cost computation fails
+            weighted_dd_cost = weighted_ep_cost = weighted_cc_cost = (
+                weighted_ccrc_cost
+            ) = 0.0
+
+        return reward, {
+            "distance_cost": weighted_dd_cost,
+            "angle_cost": weighted_ep_cost,
+            "control_cost": weighted_cc_cost,
+            "jerk_cost": weighted_ccrc_cost,
+            "total_cost": total_cost,
+        }
 
     def step(self, action: np.ndarray):
         """
@@ -70,7 +171,8 @@ class INICartPoleWrapper(BaseWorldModel):
         :return: A tuple containing (next_state, reward, terminated, info).
         """
         # Set the action (motor power)
-        self.env.Q = float(action[0])
+        action_value = float(action[0])
+        self.env.Q = action_value
 
         # Update the environment state
         self.env.update_state()
@@ -78,21 +180,18 @@ class INICartPoleWrapper(BaseWorldModel):
         # Get the new state
         state = self.env.s_with_noise_and_latency
 
-        # For a swingup-and-balance task, termination should only occur if the cart
-        # goes off the track. The pole falling over is part of the task to be learned.
-        terminated = bool(
-            state[self.POSITION_IDX] < -self.x_threshold
-            or state[self.POSITION_IDX] > self.x_threshold
-        )
+        # Compute reward using the original quadratic boundary cost function
+        reward, cost_info = self._compute_reward_from_cost(state, action_value)
 
-        # Assign reward
-        # The reward is based on the pole's angle. We use the cosine of the angle,
-        # which is at index ANGLE_COS_IDX (==0), to reward the agent for keeping the pole upright.
-        # The reward is scaled to be in the [0, 1] range.
-        reward = (state[self.ANGLE_COS_IDX] + 1.0) / 2.0
+        # Manual termination after max_steps (no out-of-bounds termination)
+        self.step_count += 1
+        terminated = self.step_count >= self.max_steps
 
-        # The 'info' dictionary is not used for now
-        info = {}
+        # Update previous action for next step's jerk calculation
+        self.previous_action = action_value
+
+        # Info dictionary with cost breakdown
+        info = {"step_count": self.step_count, "max_steps": self.max_steps, **cost_info}
 
         return state, reward, terminated, info
 
@@ -104,4 +203,9 @@ class INICartPoleWrapper(BaseWorldModel):
         """
         # `reset_mode=1` initializes the cart at a random state.
         self.env.set_cartpole_state_at_t0(reset_mode=1)
+
+        # Reset step counter and previous action
+        self.step_count = 0
+        self.previous_action = 0.0
+
         return self.env.s
