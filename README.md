@@ -184,7 +184,7 @@ The Actor and Critic work together: The Actor selects an action, and the Critic 
 
 ### 6.3 Integrating MBRL with Actor-Critic: The "Dreamer" Loop
 
-This project combines MBRL and Actor-Critic in a powerful loop, inspired by algorithms like Dreamer. Here's how it works:
+This project combines MBRL and Actor-Critic in a powerful loop, inspired by algorithms like [Dreamer](https://www.nature.com/articles/s41586-025-08744-2). Here's how it works:
 
 1.  **Data Collection (Interaction with Reality):** Initially, the agent interacts with the real environment (the `INICartPoleWrapper`) using a preliminary (e.g., random) policy to collect a set of experiences `(s, a, s', r)`.
 
@@ -229,7 +229,7 @@ $$
 L_{Critic}(\psi) = \mathbb{E}_{s_\tau \sim p_\theta} \left[ \| V_{\psi}(s_\tau) - \mathrm{stop\_grad}(v_\tau) \|^2 \right]
 $$
 
-The expectation $\mathbb{E}_{s_\tau \sim p_\theta}$ means we average this loss over all states in many imagined trajectories. The `stop_grad` function prevents the value targets (which depend on the world model) from propagating gradients back into the world model during the agent's training phase.
+The expectation $\mathbb{E}_{s_\tau \sim p_\theta}$ means we average this loss over all states in many imagined trajectories. The `stop_grad` function is crucial: it prevents the value targets (which depend on the world model's predictions) from propagating gradients back into the world model during the agent's training phase.
 
 #### Actor (Policy) Loss
 
