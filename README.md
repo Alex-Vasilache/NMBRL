@@ -240,3 +240,16 @@ $$
 L_{Actor}(\phi) = - \mathbb{E}_{s_\tau \sim p_\theta} \left[ V_{\psi}(s_\tau) \right]
 $$
 This loss encourages the policy $\pi_\phi$ to select action sequences that produce trajectories with high cumulative reward, as judged by the learned world model and value function. The actor is not trained on the value targets $v_\tau$ directly, but rather on the critic's learned, smooth approximation of them, $V_\psi$.
+
+### 6.5 SNN-Specific Considerations
+
+A crucial point to consider when using Spiking Neural Networks (SNNs) for the world model, actor, and critic is their stateful nature, which requires a different training approach compared to traditional, stateless Artificial Neural Networks (ANNs).
+
+#### Temporal Dynamics and Trajectory Length
+
+The core of the issue lies in the fact that each neuron in an SNN maintains an internal state (e.g., its membrane potential) that evolves over time. Consequently:
+
+*   **Need for Sequential Data:** An SNN cannot produce a meaningful output from a single, isolated input state. It needs a sequence of inputs over time for its internal dynamics to converge and represent information effectively. This means that during the "dreaming" phase, we cannot simply use random, disconnected state-action pairs from a replay buffer.
+*   **Continuous Trajectories:** The training process must use **continuous, long trajectories** of imagined experience. This allows the hidden states of the SNN world model to evolve naturally from one step to the next. The same principle applies to the SNN actor and critic, which must also process these state sequences to produce stable actions and value estimates.
+
+This requirement contrasts with many traditional MBRL implementations where the collected experience `(s, a, s', r)` can be stored in a replay buffer and sampled randomly for training. For our SNN-based approach, the *sequence* of experience is just as important as the individual data points. The training loops (`ActorCriticTrainer` and `WorldModelTrainer`) must be designed to generate and train on these unbroken, sequential rollouts from the world model.
