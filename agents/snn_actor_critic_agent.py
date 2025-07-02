@@ -18,7 +18,7 @@ class CriticSNN(nn.Module):
     """
 
     def __init__(
-        self, state_dim=6, hidden_dim=128, output_dim=1, num_steps=20, beta=0.9
+        self, state_dim=6, hidden_dim=128, output_dim=1, num_steps=1, alpha=0.9, beta=0.9, threshold=1, learn_alpha=True, learn_beta=True, learn_threshold=True
     ):
         """
         Initialize the Critic SNN.
@@ -35,20 +35,27 @@ class CriticSNN(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.num_steps = num_steps
+        self.alpha = alpha
         self.beta = beta
+        self.threshold = threshold
+        self.learn_alpha = learn_alpha
+        self.learn_beta = learn_beta
+        self.learn_threshold = learn_threshold
 
         # Define the network layers
         self.fc1 = nn.Linear(state_dim, hidden_dim)
-        self.lif1 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif1 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.lif2 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif2 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         self.fc3 = nn.Linear(hidden_dim, hidden_dim)
-        self.lif3 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif3 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         # Output layer (no spiking neuron, direct value output)
         self.fc_out = nn.Linear(hidden_dim, output_dim)
+
+        self.reset()
 
     def forward(self, state):
         """
@@ -59,35 +66,31 @@ class CriticSNN(nn.Module):
         """
         batch_size = state.shape[0]
 
-        # Initialize membrane potentials
-        mem1 = self.lif1.init_leaky()
-        mem2 = self.lif2.init_leaky()
-        mem3 = self.lif3.init_leaky()
-
         # Collect output spikes over time
         spk_rec = []
-        mem_rec = []
 
         # Simulate over time steps
         for step in range(self.num_steps):
-            # Encode state as current input (could be improved with better encoding)
             cur1 = self.fc1(state)
-            spk1, mem1 = self.lif1(cur1, mem1)
+            spk1, self.mem1 = self.lif1(cur1, self.mem1)
 
             cur2 = self.fc2(spk1)
-            spk2, mem2 = self.lif2(cur2, mem2)
+            spk2, self.mem2 = self.lif2(cur2, self.mem2)
 
             cur3 = self.fc3(spk2)
-            spk3, mem3 = self.lif3(cur3, mem3)
+            spk3, self.mem3 = self.lif3(cur3, self.mem3)
 
             spk_rec.append(spk3)
-            mem_rec.append(mem3)
 
-        # Use average spike activity over time steps for value estimation
         avg_spikes = torch.stack(spk_rec, dim=0).mean(dim=0)
         value = self.fc_out(avg_spikes)
 
         return value
+
+    def reset(self):
+        self.mem1 = self.lif1.init_synaptic()
+        self.mem2 = self.lif2.init_synaptic()
+        self.mem3 = self.lif3.init_synaptic()
 
 
 class ActorSNN(nn.Module):
@@ -97,7 +100,7 @@ class ActorSNN(nn.Module):
     """
 
     def __init__(
-        self, state_dim=6, hidden_dim=128, action_dim=1, num_steps=20, beta=0.9
+        self, state_dim=6, hidden_dim=128, action_dim=1, num_steps=1, alpha=0.9, beta=0.9, threshold=1, learn_alpha=True, learn_beta=True, learn_threshold=True
     ):
         """
         Initialize the Actor SNN.
@@ -114,21 +117,28 @@ class ActorSNN(nn.Module):
         self.hidden_dim = hidden_dim
         self.action_dim = action_dim
         self.num_steps = num_steps
+        self.alpha = alpha
         self.beta = beta
+        self.threshold = threshold
+        self.learn_alpha = learn_alpha
+        self.learn_beta = learn_beta
+        self.learn_threshold = learn_threshold
 
         # Define the network layers
         self.fc1 = nn.Linear(state_dim, hidden_dim)
-        self.lif1 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif1 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.lif2 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif2 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         self.fc3 = nn.Linear(hidden_dim, hidden_dim)
-        self.lif3 = snn.Leaky(beta=beta, spike_grad=surrogate.fast_sigmoid())
+        self.lif3 = snn.Synaptic(alpha=alpha, beta=beta, learn_alpha=learn_alpha, learn_beta=learn_beta, learn_threshold=learn_threshold, spike_grad=surrogate.fast_sigmoid())
 
         # Output layers for action mean and log_std
         self.fc_mean = nn.Linear(hidden_dim, action_dim)
         self.fc_log_std = nn.Linear(hidden_dim, action_dim)
+
+        self.reset()
 
     def forward(self, state):
         """
@@ -139,11 +149,6 @@ class ActorSNN(nn.Module):
         """
         batch_size = state.shape[0]
 
-        # Initialize membrane potentials
-        mem1 = self.lif1.init_leaky()
-        mem2 = self.lif2.init_leaky()
-        mem3 = self.lif3.init_leaky()
-
         # Collect output spikes over time
         spk_rec = []
 
@@ -151,17 +156,16 @@ class ActorSNN(nn.Module):
         for step in range(self.num_steps):
             # Encode state as current input
             cur1 = self.fc1(state)
-            spk1, mem1 = self.lif1(cur1, mem1)
+            spk1, self.mem1 = self.lif1(cur1, self.mem1)
 
             cur2 = self.fc2(spk1)
-            spk2, mem2 = self.lif2(cur2, mem2)
+            spk2, self.mem2 = self.lif2(cur2, self.mem2)
 
             cur3 = self.fc3(spk2)
-            spk3, mem3 = self.lif3(cur3, mem3)
+            spk3, self.mem3 = self.lif3(cur3, self.mem3)
 
             spk_rec.append(spk3)
 
-        # Use average spike activity over time steps
         avg_spikes = torch.stack(spk_rec, dim=0).mean(dim=0)
 
         # Output action parameters
@@ -172,6 +176,11 @@ class ActorSNN(nn.Module):
         action_log_std = torch.clamp(action_log_std, min=-10, max=2)
 
         return action_mean, action_log_std
+
+    def reset(self):
+        self.mem1 = self.lif1.init_synaptic()
+        self.mem2 = self.lif2.init_synaptic()
+        self.mem3 = self.lif3.init_synaptic()
 
 
 class SnnActorCriticAgent(BaseAgent):
