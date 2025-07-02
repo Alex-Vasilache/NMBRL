@@ -159,3 +159,84 @@ graph TD;
     T2_3 --> T4_1;
     T3_2 --> T4_1;
 ```
+
+## 6. Tutorial: Model-Based Reinforcement Learning with an Actor-Critic Agent
+
+This section provides a conceptual overview of the Model-Based Reinforcement Learning (MBRL) approach with an Actor-Critic agent, as implemented in this project.
+
+### 6.1 What is Model-Based Reinforcement Learning?
+
+In contrast to model-free RL (where an agent learns a policy through trial-and-error interacting directly with the environment), MBRL involves two distinct stages:
+
+1.  **Learn a Model:** First, the agent learns a *model* of the environment. This "world model" is a function that predicts the consequences of actions. Given a current state `s` and an action `a`, the model predicts the next state `s'` and the immediate reward `r`.
+2.  **Train an Agent:** Once the world model is learned, the agent is trained on this model instead of the real environment. The agent can "imagine" or "dream" of interacting with the environment by using the world model to simulate trajectories.
+
+The primary advantage of MBRL is **sample efficiency**. Since the agent can generate a vast amount of simulated experience from the learned model, it requires significantly fewer interactions with the real environment, which can be expensive, slow, or dangerous.
+
+### 6.2 The Actor-Critic Method
+
+Actor-Critic is a popular model-free RL algorithm that we use to train our agent *within* the learned world model. It combines the strengths of two other types of algorithms:
+
+-   **The Actor:** This is the policy. It takes the current state `s` as input and decides which action `a` to take (`a = π(s)`). The actor's goal is to learn the optimal policy.
+-   **The Critic:** This is a value function. It evaluates the "goodness" of a state or a state-action pair by predicting the expected future reward (the "value"). For instance, `V(s)` estimates the total reward an agent can expect to receive starting from state `s`.
+
+The Actor and Critic work together: The Actor selects an action, and the Critic evaluates how good that action was. The Actor then updates its policy based on the Critic's feedback, making it more likely to choose actions that the Critic deems good. Simultaneously, the Critic improves its own estimations by observing the rewards received.
+
+### 6.3 Integrating MBRL with Actor-Critic: The "Dreamer" Loop
+
+This project combines MBRL and Actor-Critic in a powerful loop, inspired by algorithms like Dreamer. Here's how it works:
+
+1.  **Data Collection (Interaction with Reality):** Initially, the agent interacts with the real environment (the `INICartPoleWrapper`) using a preliminary (e.g., random) policy to collect a set of experiences `(s, a, s', r)`.
+
+2.  **World Model Training (Learning the Dynamics):** The `WorldModelTrainer` uses this collected data to train the `SNNWorldModel`. This is a supervised learning problem where the model learns to predict `(s', r)` given `(s, a)`.
+
+3.  **Behavior Learning (Training in "Imagination"):** This is the core of the sample efficiency gain. The `ActorCriticTrainer` trains the `SnnActorCriticAgent` *entirely within the learned `SNNWorldModel`*.
+    - The trainer simulates long trajectories of experience using the world model without ever touching the real environment.
+    - For each step in the imagination, the **Actor** proposes an action. The **World Model** predicts the next state and reward. The **Critic** evaluates the imagined state.
+    - This large volume of imagined data is used to update the Actor and Critic networks. Because this all happens in simulation, it is fast and generates no wear-and-tear on real hardware.
+
+4.  **Repeat:** After a period of "dreaming," the improved Actor is used to interact with the real environment again (Step 1), collecting higher-quality data. This new data is used to further refine the world model (Step 2), which in turn allows for even better agent training (Step 3).
+
+This cycle allows the agent to build a robust understanding of the world and a high-performance policy with minimal real-world interaction. The use of SNNs for both the world model and the agent further aims to make the computationally-heavy "dreaming" phase energy-efficient.
+
+### 6.4 Mathematical Formulation
+
+To understand the learning process more deeply, let's look at the objectives for each component. Let $\theta$ be the parameters of the world model, $\phi$ be the parameters of the actor, and $\psi$ be the parameters of the critic.
+
+#### World Model Loss
+
+The world model, $p_\theta(s_{t+1}, r_{t+1} | s_t, a_t)$, is trained to predict the next state and reward given the current state and action. It is trained by minimizing a reconstruction loss on real data collected from the environment. A common choice for this loss is the Mean Squared Error (MSE):
+
+$$
+L_{WM}(\theta) = \mathbb{E}_{(s_t, a_t, r_{t+1}, s_{t+1}) \sim \mathcal{D}} \left[ \|s_{t+1} - \hat{s}_{t+1}\|^2 + \|r_{t+1} - \hat{r}_{t+1}\|^2 \right]
+$$
+
+where $(\hat{s}_{t+1}, \hat{r}_{t+1})$ are the predictions from the world model $p_\theta$, and $\mathcal{D}$ is the dataset of real-world experiences.
+
+#### Critic (Value) Loss
+
+The critic, $V_\psi(s_t)$, learns to estimate the expected future rewards from a given state. It is trained on trajectories imagined by the world model. For each state $s_\tau$ in an imagined trajectory, the critic's goal is to predict the sum of future rewards over a certain horizon $H$, known as the value target $v_\tau$.
+
+The value target is the discounted sum of rewards in the imagined trajectory:
+$$
+v_{\tau} = \sum_{k=\tau}^{\tau+H} \gamma^{k-\tau} r_k
+$$
+where $r_k$ are the rewards predicted by the world model and $\gamma$ is a discount factor.
+
+The critic is then updated by minimizing the MSE between its predictions $V_\psi(s_\tau)$ and these calculated value targets:
+
+$$
+L_{Critic}(\psi) = \mathbb{E}_{s_\tau \sim p_\theta} \left[ \| V_{\psi}(s_\tau) - \mathrm{stop\_grad}(v_\tau) \|^2 \right]
+$$
+
+The expectation $\mathbb{E}_{s_\tau \sim p_\theta}$ means we average this loss over all states in many imagined trajectories. The `stop_grad` function prevents the value targets (which depend on the world model) from propagating gradients back into the world model during the agent's training phase.
+
+#### Actor (Policy) Loss
+
+The actor (policy), $\pi_\phi(a_t | s_t)$, is updated to choose actions that lead to states with higher values as estimated by the critic. The actor's objective is to maximize the expected value of states it visits within the imagination.
+
+This is achieved by performing gradient ascent on the value estimates. Equivalently, we can define the loss as the negative of the critic's value predictions, encouraging the actor to move towards states the critic deems more valuable:
+$$
+L_{Actor}(\phi) = - \mathbb{E}_{s_\tau \sim p_\theta} \left[ V_{\psi}(s_\tau) \right]
+$$
+This loss encourages the policy $\pi_\phi$ to select action sequences that produce trajectories with high cumulative reward, as judged by the learned world model and value function. The actor is not trained on the value targets $v_\tau$ directly, but rather on the critic's learned, smooth approximation of them, $V_\psi$.
