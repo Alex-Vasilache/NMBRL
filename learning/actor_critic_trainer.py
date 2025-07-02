@@ -206,9 +206,11 @@ class ActorCriticTrainer:
                 # Periodic training updates
                 if step_count % self.update_frequency == 0 and self.can_train():
                     # We save the agent states before training to avoid forgetting the current membrane potentials and spikes, because during training the agent is reset
-                    self.agent.save_agent_states()
+                    #self.agent.save_agent_states()
                     losses = self.train_agent()
-                    self.agent.load_agent_states()
+                    #self.agent.load_agent_states()
+                    self.agent.actor.reset()
+                    self.agent.critic.reset()
                     if losses and step_count % (self.update_frequency * 5) == 0:
                         print(
                             f"  Step {step_count}: Actor Loss: {losses['actor_loss']:.4f}, "
@@ -256,6 +258,8 @@ class ActorCriticTrainer:
         # Set agent to evaluation mode
         self.agent.actor.eval()
         self.agent.critic.eval()
+        self.agent.actor.reset()
+        self.agent.critic.reset()
 
         eval_rewards = []
         eval_lengths = []
@@ -300,18 +304,18 @@ if __name__ == "__main__":
     # Example configuration
     training_config = {
         "num_episodes": 50,
-        "batch_size": 32,
-        "buffer_seq_length": 20,  # Sequence length for SNN training
+        "batch_size": 256,
+        "buffer_seq_length": 8,  # Sequence length for SNN training
         "update_frequency": 10,
         "learning_rate": 1e-3,
         "gamma": 0.99,
-        "hidden_dim": 128,
+        "hidden_dim": 64,
         "snn_time_steps": 1,
         "buffer_size": 1000,
-        "max_steps_per_episode": 1000,
+        "max_steps_per_episode": 500,
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 1,
+        "threshold": 0.5,
         "learn_alpha": True,
         "learn_beta": True,
         "learn_threshold": True,
