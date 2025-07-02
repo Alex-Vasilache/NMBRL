@@ -74,6 +74,7 @@ class INICartPoleWrapper(BaseWorldModel):
 
             # Initialize the cost function with required parameters
             self.cost_function = quadratic_boundary(variable_parameters, NumpyLibrary())
+            self.max_cost = self.cost_function.MAX_COST
 
         finally:
             os.chdir(original_cwd)
@@ -113,8 +114,8 @@ class INICartPoleWrapper(BaseWorldModel):
         # Extract scalar cost value
         total_cost = float(stage_cost[0, 0])
 
-        # Convert cost to reward (negative cost)
-        reward = -total_cost
+        # Convert cost to reward (negative cost); normalize the cost to be between 0 and 1
+        reward = -total_cost / self.max_cost
 
         # For debugging, compute individual components with correct weights
         try:

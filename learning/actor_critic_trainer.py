@@ -36,8 +36,14 @@ class ActorCriticTrainer:
             action_space=action_space,
             state_dim=config.get("state_dim", 6),
             hidden_dim=config.get("hidden_dim", 128),
-            num_steps=config.get("snn_time_steps", 20),
+            num_steps=config.get("snn_time_steps", 1),
             lr=config.get("learning_rate", 1e-3),
+            alpha=config.get("alpha", 0.9),
+            beta=config.get("beta", 0.9),
+            threshold=config.get("threshold", 1),
+            learn_alpha=config.get("learn_alpha", True),
+            learn_beta=config.get("learn_beta", True),
+            learn_threshold=config.get("learn_threshold", True),
         )
 
         # Training parameters
@@ -80,6 +86,8 @@ class ActorCriticTrainer:
         Returns batch_size sequences of length buffer_seq_length..
         """
         buffer_size = len(self.experience_buffer["states"])
+
+        #TODO deque should be sequence starts and should be removed when sampling
         
         # Calculate maximum possible starting positions for sequences
         max_start_idx = buffer_size - self.buffer_seq_length
@@ -123,13 +131,13 @@ class ActorCriticTrainer:
             batch_sequences["dones"].append(np.array(seq_dones))
 
         # Convert to numpy arrays
-        # Shape: (batch_size, sequence_length, feature_dim)
+        # Shape: (batch_size, sequence_length, feature_dim) -> (sequence_length, batch_size, feature_dim)
         batch = {
-            "states": np.array(batch_sequences["states"]),
-            "actions": np.array(batch_sequences["actions"]),
-            "rewards": np.array(batch_sequences["rewards"]),
-            "next_states": np.array(batch_sequences["next_states"]),
-            "dones": np.array(batch_sequences["dones"]),
+            "states": np.array(batch_sequences["states"]).transpose(1, 0, 2),
+            "actions": np.array(batch_sequences["actions"]).transpose(1, 0, 2),
+            "rewards": np.array(batch_sequences["rewards"]).transpose(1, 0),
+            "next_states": np.array(batch_sequences["next_states"]).transpose(1, 0, 2),
+            "dones": np.array(batch_sequences["dones"]).transpose(1, 0),
         }
 
         return batch
@@ -141,15 +149,10 @@ class ActorCriticTrainer:
 
         batch = self.sample_batch()
 
-        # Flatten actions if needed (remove extra dimensions)
-        actions = batch["actions"]
-        if actions.ndim > 2:  # Now we expect (batch_size, seq_length, action_dim)
-            actions = actions.squeeze()
-
         # Update the agent with sequences
         losses = self.agent.update(
             states=batch["states"],
-            actions=actions,
+            actions=batch["actions"],
             rewards=batch["rewards"],
             next_states=batch["next_states"],
             dones=batch["dones"],
@@ -177,6 +180,9 @@ class ActorCriticTrainer:
             total_reward = 0
             step_count = 0
 
+            self.agent.actor.reset()
+            self.agent.critic.reset()
+
             # Episode rollout
             while not terminated and step_count < max_steps_per_episode:
                 # Get action from agent
@@ -190,7 +196,10 @@ class ActorCriticTrainer:
 
                 # Periodic training updates
                 if step_count % self.update_frequency == 0 and self.can_train():
+                    # We save the agent states before training to avoid forgetting the current membrane potentials and spikes, because during training the agent is reset
+                    self.agent.save_agent_states()
                     losses = self.train_agent()
+                    self.agent.load_agent_states()
                     if losses and step_count % (self.update_frequency * 5) == 0:
                         print(
                             f"  Step {step_count}: Actor Loss: {losses['actor_loss']:.4f}, "
@@ -288,9 +297,15 @@ if __name__ == "__main__":
         "learning_rate": 1e-3,
         "gamma": 0.99,
         "hidden_dim": 128,
-        "snn_time_steps": 20,
+        "snn_time_steps": 1,
         "buffer_size": 1000,
         "max_steps_per_episode": 1000,
+        "alpha": 0.9,
+        "beta": 0.9,
+        "threshold": 1,
+        "learn_alpha": True,
+        "learn_beta": True,
+        "learn_threshold": True,
     }
 
     trainer = ActorCriticTrainer(config=training_config)
