@@ -21,6 +21,7 @@ sys.path.insert(
 
 from base_world_model import BaseWorldModel
 from CartPole.CartPole import CartPole as RealCartPole
+from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX
 
 
 class INICartPoleWrapper(BaseWorldModel):
@@ -37,7 +38,6 @@ class INICartPoleWrapper(BaseWorldModel):
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
         # Define thresholds for termination
-        self.theta_threshold_radians = 12 * 2 * math.pi / 360
         self.x_threshold = 2.4
 
         # Initialize the "real" CartPole environment
@@ -64,19 +64,18 @@ class INICartPoleWrapper(BaseWorldModel):
         # Get the new state
         state = self.env.s_with_noise_and_latency
 
-        # Determine if the episode is terminated
+        # For a swingup-and-balance task, termination should only occur if the cart
+        # goes off the track. The pole falling over is part of the task to be learned.
         terminated = bool(
-            state[0] < -self.x_threshold
-            or state[0] > self.x_threshold
-            or state[2] < -self.theta_threshold_radians
-            or state[2] > self.theta_threshold_radians
+            state[POSITION_IDX] < -self.x_threshold
+            or state[POSITION_IDX] > self.x_threshold
         )
 
         # Assign reward
-        # For a swingup task, reward should be based on the pole's angle.
-        # We use the cosine of the angle, which is conveniently in state[2].
-        # We scale it to be in the [0, 1] range.
-        reward = (state[2] + 1.0) / 2.0
+        # The reward is based on the pole's angle. We use the cosine of the angle,
+        # which is at index ANGLE_COS_IDX (==0), to reward the agent for keeping the pole upright.
+        # The reward is scaled to be in the [0, 1] range.
+        reward = (state[ANGLE_COS_IDX] + 1.0) / 2.0
 
         # The 'info' dictionary is not used for now
         info = {}
