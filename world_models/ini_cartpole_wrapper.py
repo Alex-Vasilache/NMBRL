@@ -4,22 +4,35 @@
 
 import numpy as np
 import math
+import sys
+import os
 
-from Neuromorphic_MBRL.world_models.base_world_model import BaseWorldModel
-from CartPole import CartPole as RealCartPole
-from CartPole.state_utilities import create_cartpole_state
+# This is a hacky way to ensure the imports from the submodule work.
+# It's not ideal, but it's the most straightforward solution given the project structure.
+# We add the submodule's root to the Python path.
+sys.path.insert(
+    0,
+    os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
+        )
+    ),
+)
+
+from base_world_model import BaseWorldModel
+from CartPole.CartPole import CartPole as RealCartPole
 
 
-class EnvironmentWrapper(BaseWorldModel):
+class INICartPoleWrapper(BaseWorldModel):
     """
-    A wrapper for the existing CartPole environment to make it compatible with the BaseWorldModel interface.
+    A wrapper for the existing INI CartPole environment to make it compatible with the BaseWorldModel interface.
     This allows the RL agent to interact with the "real" environment in the same way it would
     interact with a learned world model.
     """
 
     def __init__(self, **kwargs):
         """
-        Initializes the EnvironmentWrapper.
+        Initializes the INICartPoleWrapper.
 
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
