@@ -54,12 +54,14 @@ class ActorCriticTrainer:
 
         # Experience buffer for batch training
         self.experience_buffer = {
-            "states": deque(maxlen=config.get("buffer_size", 1000)),
-            "actions": deque(maxlen=config.get("buffer_size", 1000)),
-            "rewards": deque(maxlen=config.get("buffer_size", 1000)),
-            "next_states": deque(maxlen=config.get("buffer_size", 1000)),
-            "dones": deque(maxlen=config.get("buffer_size", 1000)),
+            "states": [],
+            "actions": [],
+            "rewards": [],
+            "next_states": [],
+            "dones": [],
         }
+
+        self.viable_sequence_starts = []
 
         # Training statistics
         self.episode_rewards = []
@@ -73,28 +75,31 @@ class ActorCriticTrainer:
         self.experience_buffer["rewards"].append(reward)
         self.experience_buffer["next_states"].append(next_state.copy())
         self.experience_buffer["dones"].append(done)
+        self.viable_sequence_starts.append(len(self.experience_buffer["states"]) - 1)
 
     def can_train(self):
         """Check if we have enough experience to perform training."""
         # Need enough data to sample unique overlapping batch_size sequences of length buffer_seq_length
         min_buffer_size = self.buffer_seq_length + self.batch_size - 1
-        return len(self.experience_buffer["states"]) >= min_buffer_size
+        return len(self.viable_sequence_starts) >= min_buffer_size
 
     def sample_batch(self):
         """
         Sample a batch of overlapping but unique sequences for SNN training.
         Returns batch_size sequences of length buffer_seq_length..
         """
-        buffer_size = len(self.experience_buffer["states"])
+        buffer_size = len(self.viable_sequence_starts)
 
-        #TODO deque should be sequence starts and should be removed when sampling
-        
         # Calculate maximum possible starting positions for sequences
-        max_start_idx = buffer_size - self.buffer_seq_length
+        max_start_idx = max(self.viable_sequence_starts) - self.buffer_seq_length + 1
+
+        max_viable_start_idx = 0
+        while self.viable_sequence_starts[max_viable_start_idx] <= max_start_idx:
+            max_viable_start_idx += 1
         
         # Randomly select unique sequence starting positions 
         sequence_starts = np.random.choice(
-            range(max_start_idx + 1), 
+            self.viable_sequence_starts[:max_viable_start_idx], 
             size=self.batch_size, 
             replace=False
         )
@@ -129,6 +134,10 @@ class ActorCriticTrainer:
             batch_sequences["rewards"].append(np.array(seq_rewards))
             batch_sequences["next_states"].append(np.array(seq_next_states))
             batch_sequences["dones"].append(np.array(seq_dones))
+
+        # Remove the sequences from the viable starting positions
+        for start_idx in sequence_starts:
+            self.viable_sequence_starts.remove(start_idx)
 
         # Convert to numpy arrays
         # Shape: (batch_size, sequence_length, feature_dim) -> (sequence_length, batch_size, feature_dim)
