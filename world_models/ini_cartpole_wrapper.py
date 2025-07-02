@@ -7,21 +7,7 @@ import math
 import sys
 import os
 
-# This is a hacky way to ensure the imports from the submodule work.
-# It's not ideal, but it's the most straightforward solution given the project structure.
-# We add the submodule's root to the Python path.
-sys.path.insert(
-    0,
-    os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
-        )
-    ),
-)
-
-from base_world_model import BaseWorldModel
-from CartPole.CartPole import CartPole as RealCartPole
-from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX
+from .base_world_model import BaseWorldModel
 
 
 class INICartPoleWrapper(BaseWorldModel):
@@ -37,11 +23,39 @@ class INICartPoleWrapper(BaseWorldModel):
 
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
+        # This is a hacky way to ensure the imports from the submodule work,
+        # and that the submodule can find its own config files.
+        submodule_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
+            )
+        )
+        si_toolkit_src_path = os.path.join(submodule_root, "SI_Toolkit", "src")
+
+        if submodule_root not in sys.path:
+            sys.path.insert(0, submodule_root)
+        if si_toolkit_src_path not in sys.path:
+            sys.path.insert(0, si_toolkit_src_path)
+
+        from CartPole import CartPole as RealCartPole
+        from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX
+
+        self.POSITION_IDX = POSITION_IDX
+        self.ANGLE_COS_IDX = ANGLE_COS_IDX
+
+        # We need to change the CWD so that the environment can find its config files.
+        # This is not ideal, but necessary given the structure of the submodule.
+        original_cwd = os.getcwd()
+        os.chdir(submodule_root)
+
+        try:
+            # Initialize the "real" CartPole environment
+            self.env = RealCartPole()
+        finally:
+            os.chdir(original_cwd)
+
         # Define thresholds for termination
         self.x_threshold = 2.4
-
-        # Initialize the "real" CartPole environment
-        self.env = RealCartPole()
 
         # Set a default simulation timestep if not provided
         self.env.dt_simulation = kwargs.get("dt_simulation", 0.02)
@@ -67,15 +81,15 @@ class INICartPoleWrapper(BaseWorldModel):
         # For a swingup-and-balance task, termination should only occur if the cart
         # goes off the track. The pole falling over is part of the task to be learned.
         terminated = bool(
-            state[POSITION_IDX] < -self.x_threshold
-            or state[POSITION_IDX] > self.x_threshold
+            state[self.POSITION_IDX] < -self.x_threshold
+            or state[self.POSITION_IDX] > self.x_threshold
         )
 
         # Assign reward
         # The reward is based on the pole's angle. We use the cosine of the angle,
         # which is at index ANGLE_COS_IDX (==0), to reward the agent for keeping the pole upright.
         # The reward is scaled to be in the [0, 1] range.
-        reward = (state[ANGLE_COS_IDX] + 1.0) / 2.0
+        reward = (state[self.ANGLE_COS_IDX] + 1.0) / 2.0
 
         # The 'info' dictionary is not used for now
         info = {}
