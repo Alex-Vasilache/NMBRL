@@ -419,6 +419,24 @@ class ActorSNN(nn.Module):
             mean=self.weight_init_mean, std=self.weight_init_std
         )
 
+        self.li_mean = snn.Synaptic(
+            alpha=alpha,
+            beta=beta,
+            learn_alpha=learn_alpha,
+            learn_beta=learn_beta,
+            spike_grad=surrogate.fast_sigmoid(),
+            reset_mechanism="none",
+        )
+
+        self.li_std = snn.Synaptic(
+            alpha=alpha,
+            beta=beta,
+            learn_alpha=learn_alpha,
+            learn_beta=learn_beta,
+            spike_grad=surrogate.fast_sigmoid(),
+            reset_mechanism="none",
+        )
+
         self.reset()
 
     def forward(self, state):
@@ -456,14 +474,17 @@ class ActorSNN(nn.Module):
 
         avg_spikes = torch.stack(spk_rec, dim=0).mean(dim=0)
 
-        # Output action parameters
-        action_mean = self.fc_mean(avg_spikes)
-        action_std = self.fc_std(avg_spikes)
+        cur_mean = self.fc_mean(avg_spikes)
+        cur_std = self.fc_std(avg_spikes)
+        _, self.syn_mean, self.mem_mean = self.li_mean(
+            cur_mean, self.syn_mean, self.mem_mean
+        )
+        _, self.syn_std, self.mem_std = self.li_std(cur_std, self.syn_std, self.mem_std)
 
-        action_mean = torch.tanh(action_mean)
+        action_mean = torch.tanh(self.mem_mean)
 
         action_std = (self.max_std - self.min_std) * torch.sigmoid(
-            action_std + 2.0
+            self.mem_std + 2.0
         ) + self.min_std
 
         return action_mean, action_std
@@ -471,6 +492,8 @@ class ActorSNN(nn.Module):
     def reset(self):
         self.syn1, self.mem1 = self.lif1.init_synaptic()
         self.syn2, self.mem2 = self.lif2.init_synaptic()
+        self.syn_mean, self.mem_mean = self.li_mean.init_synaptic()
+        self.syn_std, self.mem_std = self.li_std.init_synaptic()
         self.spk1 = None
         self.spk2 = None
 
@@ -482,6 +505,10 @@ class ActorSNN(nn.Module):
             "mem2": self.mem2,
             "spk1": self.spk1,
             "spk2": self.spk2,
+            "syn_mean": self.syn_mean,
+            "mem_mean": self.mem_mean,
+            "syn_std": self.syn_std,
+            "mem_std": self.mem_std,
         }
 
     def set_states(self, states):
@@ -522,6 +549,26 @@ class ActorSNN(nn.Module):
                 if states[0]["spk2"] is None
                 else torch.stack([states[i]["spk2"] for i in range(len(states))])
             )
+        )
+        self.syn_mean = (
+            states["syn_mean"]
+            if type(states) == type({})
+            else torch.stack([states[i]["syn_mean"] for i in range(len(states))])
+        )
+        self.mem_mean = (
+            states["mem_mean"]
+            if type(states) == type({})
+            else torch.stack([states[i]["mem_mean"] for i in range(len(states))])
+        )
+        self.syn_std = (
+            states["syn_std"]
+            if type(states) == type({})
+            else torch.stack([states[i]["syn_std"] for i in range(len(states))])
+        )
+        self.mem_std = (
+            states["mem_std"]
+            if type(states) == type({})
+            else torch.stack([states[i]["mem_std"] for i in range(len(states))])
         )
 
 

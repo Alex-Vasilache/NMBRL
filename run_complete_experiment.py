@@ -51,7 +51,6 @@ def run_complete_experiment(config, eval_episodes=5, visualize_eval=True):
     # Run evaluation
     results = evaluator.evaluate(
         num_episodes=eval_episodes,
-        render_delay=0.05 if visualize_eval else 0,  # Slower for better visualization
     )
 
     # Plot evaluation results
@@ -70,7 +69,7 @@ def main():
         description="Run complete SNN Actor-Critic experiment"
     )
     parser.add_argument(
-        "--episodes", type=int, default=20, help="Number of training episodes"
+        "--episodes", type=int, default=40, help="Number of training episodes"
     )
     parser.add_argument(
         "--eval-episodes", type=int, default=5, help="Number of evaluation episodes"
@@ -89,11 +88,11 @@ def main():
         "--save-dir", type=str, default="saved_models", help="Directory to save models"
     )
     parser.add_argument(
-        "--hidden-dim", type=int, default=64, help="Hidden dimension for SNN layers"
+        "--hidden-dim", type=int, default=128, help="Hidden dimension for SNN layers"
     )
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
-        "--batch-size", type=int, default=256, help="Batch size for training"
+        "--batch-size", type=int, default=512, help="Batch size for training"
     )
 
     args = parser.parse_args()
@@ -117,10 +116,10 @@ def main():
         # SNN Parameters
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 1.0,
-        "learn_alpha": False,  # Keep SNN parameters fixed for stability
-        "learn_beta": False,
-        "learn_threshold": False,
+        "threshold": 0.01,
+        "learn_alpha": True,
+        "learn_beta": True,
+        "learn_threshold": True,
         # Network initialization
         "weight_init_mean": 0.0,
         "weight_init_std": 0.01,

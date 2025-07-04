@@ -102,7 +102,7 @@ class ModelEvaluator:
 
         print("Models loaded successfully!")
 
-    def evaluate(self, num_episodes=10, max_steps_per_episode=1000, render_delay=0.02):
+    def evaluate(self, num_episodes=10, max_steps_per_episode=10000, render_delay=0.02):
         """
         Evaluate the loaded model over multiple episodes.
 
@@ -347,7 +347,7 @@ def main():
         description="Evaluate trained SNN Actor-Critic model"
     )
     parser.add_argument(
-        "model_path", type=str, help="Path to the saved model directory"
+        "--model_path", type=str, help="Path to the saved model directory"
     )
     parser.add_argument(
         "--episodes", type=int, default=10, help="Number of evaluation episodes"

@@ -30,6 +30,7 @@ class ActorCriticTrainer:
         """
         self.config = config
         self.world_model = INICartPoleWrapper(
+            max_steps=config.get("max_steps_per_episode", 10000),
             visualize=config.get("visualize", False),
             dt_simulation=config.get("dt_simulation", 0.02),
         )
@@ -271,7 +272,7 @@ class ActorCriticTrainer:
         Runs the main training loop with proper learning updates.
         """
         num_episodes = self.config.get("num_episodes", 100)
-        max_steps_per_episode = self.config.get("max_steps_per_episode", 1000)
+        max_steps_per_episode = self.config.get("max_steps_per_episode", 10000)
         save_frequency = self.config.get(
             "save_frequency", None
         )  # Save every N episodes
@@ -425,13 +426,13 @@ if __name__ == "__main__":
         "num_episodes": 50,
         "batch_size": 512,
         "buffer_seq_length": 15,  # Trajectory length for λ-returns
-        "update_frequency": 1,
+        "update_frequency": 10,
         "learning_rate": 1e-4,
         "gamma": 0.997,  # Discount factor for the reward
         "discount_lambda": 0.95,  # return mixing factor
         "hidden_dim": 64,
         "snn_time_steps": 1,
-        "max_steps_per_episode": 1000,
+        "max_steps_per_episode": 10000,
         "alpha": 0.9,
         "beta": 0.9,
         "threshold": 1.0,
