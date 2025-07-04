@@ -51,13 +51,24 @@ class INICartPoleWrapper(BaseWorldModel):
 
         from CartPole import CartPole as RealCartPole
         from CartPole.cartpole_target_slider import TargetSlider
-        from CartPole.state_utilities import ANGLE_COS_IDX, POSITION_IDX, ANGLE_IDX
-        from CartPole.cartpole_parameters import TrackHalfLength
+        from CartPole.state_utilities import (
+            ANGLE_COS_IDX,
+            POSITION_IDX,
+            ANGLE_IDX,
+            ANGLED_IDX,
+            POSITIOND_IDX,
+            ANGLE_SIN_IDX,
+        )
+        from CartPole.cartpole_parameters import TrackHalfLength, v_max
 
         self.POSITION_IDX = POSITION_IDX
         self.ANGLE_COS_IDX = ANGLE_COS_IDX
         self.ANGLE_IDX = ANGLE_IDX
+        self.ANGLED_IDX = ANGLED_IDX
+        self.POSITIOND_IDX = POSITIOND_IDX
+        self.ANGLE_SIN_IDX = ANGLE_SIN_IDX
         self.TrackHalfLength = TrackHalfLength
+        self.v_max = v_max
 
         # We need to change the CWD so that the environment can find its config files.
         # This is not ideal, but necessary given the structure of the submodule.
@@ -96,6 +107,9 @@ class INICartPoleWrapper(BaseWorldModel):
         # Store target parameters for access
         self.target_position = target_position
         self.target_equilibrium = target_equilibrium
+
+        # This is an assumed limit for angular velocity, used for normalization
+        self.max_angular_velocity = 15.0  # rad/s
 
         # Previous control input for jerk penalty
         self.previous_action = 0.0
@@ -212,6 +226,47 @@ class INICartPoleWrapper(BaseWorldModel):
             "total_cost": total_cost,
         }
 
+    def _normalize_state(self, state):
+        """
+        Normalizes the state variables to be within the [0, 1] range.
+        """
+        normalized_state = np.zeros_like(state)
+
+        # Normalize position: [-TrackHalfLength, TrackHalfLength] -> [0, 1]
+        pos_clamped = np.clip(
+            state[self.POSITION_IDX], -self.TrackHalfLength, self.TrackHalfLength
+        )
+        normalized_state[self.POSITION_IDX] = (pos_clamped + self.TrackHalfLength) / (
+            2 * self.TrackHalfLength
+        )
+
+        # Normalize positionD: [-v_max, v_max] -> [0, 1]
+        posD_clamped = np.clip(state[self.POSITIOND_IDX], -self.v_max, self.v_max)
+        normalized_state[self.POSITIOND_IDX] = (posD_clamped + self.v_max) / (
+            2 * self.v_max
+        )
+
+        # Normalize angle: [-pi, pi] -> [0, 1]
+        normalized_state[self.ANGLE_IDX] = (state[self.ANGLE_IDX] + np.pi) / (
+            2 * np.pi
+        )
+
+        # Normalize angleD: [-max_angular_velocity, max_angular_velocity] -> [0, 1]
+        angleD_clamped = np.clip(
+            state[self.ANGLED_IDX],
+            -self.max_angular_velocity,
+            self.max_angular_velocity,
+        )
+        normalized_state[self.ANGLED_IDX] = (
+            angleD_clamped + self.max_angular_velocity
+        ) / (2 * self.max_angular_velocity)
+
+        # Normalize angle_cos and angle_sin: [-1, 1] -> [0, 1]
+        normalized_state[self.ANGLE_COS_IDX] = (state[self.ANGLE_COS_IDX] + 1) / 2
+        normalized_state[self.ANGLE_SIN_IDX] = (state[self.ANGLE_SIN_IDX] + 1) / 2
+
+        return normalized_state
+
     def step(self, action: np.ndarray):
         """
         Takes a single step in the environment.
@@ -246,7 +301,7 @@ class INICartPoleWrapper(BaseWorldModel):
         # Info dictionary with cost breakdown
         info = {"step_count": self.step_count, "max_steps": self.max_steps, **cost_info}
 
-        return state, reward, terminated, info
+        return self._normalize_state(state), reward, terminated, info
 
     def reset(self):
         """
@@ -265,7 +320,7 @@ class INICartPoleWrapper(BaseWorldModel):
         if self.visualize:
             self._render()
 
-        return self.env.s
+        return self._normalize_state(self.env.s)
 
     def close(self):
         """Closes the visualization window."""

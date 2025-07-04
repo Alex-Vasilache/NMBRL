@@ -30,7 +30,7 @@ class ActorCriticTrainer:
         self.config = config
         self.world_model = INICartPoleWrapper(
             visualize=config.get("visualize", False),
-            dt_simulation=config.get("dt_simulation", 0.02)
+            dt_simulation=config.get("dt_simulation", 0.02),
         )
 
         # Initialize the SNN agent
@@ -47,13 +47,18 @@ class ActorCriticTrainer:
             learn_alpha=config.get("learn_alpha", True),
             learn_beta=config.get("learn_beta", True),
             learn_threshold=config.get("learn_threshold", True),
+            weight_init_mean=config.get("weight_init_mean", 0.0),
+            weight_init_std=config.get("weight_init_std", 0.01),
+            max_std=config.get("max_std", 2.0),
+            min_std=config.get("min_std", 0.1),
         )
 
         # Training parameters
         self.batch_size = config.get("batch_size", 32)
-        self.buffer_seq_length = config.get("buffer_seq_length", 20)  # Sequence length for SNN training
+        self.buffer_seq_length = config.get("buffer_seq_length", 15)
         self.update_frequency = config.get("update_frequency", 10)
-        self.gamma = config.get("gamma", 0.99)
+        self.gamma = config.get("gamma", 0.997)
+        self.discount_lambda = config.get("discount_lambda", 0.95)
 
         # Experience buffer for batch training
         self.experience_buffer = {
@@ -71,13 +76,20 @@ class ActorCriticTrainer:
         self.episode_lengths = []
         self.training_losses = []
 
-    def collect_experience(self, state, action, reward, next_state, done):
+    def collect_experience(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        done,
+    ):
         """Store experience in the buffer."""
-        self.experience_buffer["states"].append(state.copy())
-        self.experience_buffer["actions"].append(action.copy())
-        self.experience_buffer["rewards"].append(reward)
-        self.experience_buffer["next_states"].append(next_state.copy())
-        self.experience_buffer["dones"].append(done)
+        self.experience_buffer["states"].append(state.copy())  # s at [t]
+        self.experience_buffer["actions"].append(action.copy())  # a at [t]
+        self.experience_buffer["rewards"].append(reward)  # r at [t]
+        self.experience_buffer["next_states"].append(next_state.copy())  # s at [t+1]
+        self.experience_buffer["dones"].append(done)  # done at [t]
         self.viable_sequence_starts.append(len(self.experience_buffer["states"]) - 1)
 
     def can_train(self):
@@ -99,12 +111,12 @@ class ActorCriticTrainer:
         max_viable_start_idx = 0
         while self.viable_sequence_starts[max_viable_start_idx] <= max_start_idx:
             max_viable_start_idx += 1
-        
-        # Randomly select unique sequence starting positions 
+
+        # Randomly select unique sequence starting positions
         sequence_starts = np.random.choice(
-            self.viable_sequence_starts[:max_viable_start_idx], 
-            size=self.batch_size, 
-            replace=False
+            self.viable_sequence_starts[:max_viable_start_idx],
+            size=self.batch_size,
+            replace=False,
         )
 
         # Extract sequences
@@ -113,7 +125,7 @@ class ActorCriticTrainer:
             "actions": [],
             "rewards": [],
             "next_states": [],
-            "dones": []
+            "dones": [],
         }
 
         for start_idx in sequence_starts:
@@ -123,7 +135,7 @@ class ActorCriticTrainer:
             seq_rewards = []
             seq_next_states = []
             seq_dones = []
-            
+
             for i in range(self.buffer_seq_length):
                 idx = start_idx + i
                 seq_states.append(self.experience_buffer["states"][idx])
@@ -131,7 +143,7 @@ class ActorCriticTrainer:
                 seq_rewards.append(self.experience_buffer["rewards"][idx])
                 seq_next_states.append(self.experience_buffer["next_states"][idx])
                 seq_dones.append(self.experience_buffer["dones"][idx])
-            
+
             batch_sequences["states"].append(np.array(seq_states))
             batch_sequences["actions"].append(np.array(seq_actions))
             batch_sequences["rewards"].append(np.array(seq_rewards))
@@ -169,6 +181,7 @@ class ActorCriticTrainer:
             next_states=batch["next_states"],
             dones=batch["dones"],
             gamma=self.gamma,
+            discount_lambda=self.discount_lambda,
         )
 
         self.training_losses.append(losses)
@@ -198,20 +211,27 @@ class ActorCriticTrainer:
             # Episode rollout
             while not terminated and step_count < max_steps_per_episode:
                 # Get action from agent
+
                 action = self.agent.get_action(state)
 
                 # Environment step
                 next_state, reward, terminated, info = self.world_model.step(action)
 
                 # Store experience
-                self.collect_experience(state, action, reward, next_state, terminated)
+                self.collect_experience(
+                    state,
+                    action,
+                    reward,
+                    next_state,
+                    terminated,
+                )
 
                 # Periodic training updates
                 if step_count % self.update_frequency == 0 and self.can_train():
                     # We save the agent states before training to avoid forgetting the current membrane potentials and spikes, because during training the agent is reset
-                    #self.agent.save_agent_states()
+                    # self.agent.save_agent_states()
                     losses = self.train_agent()
-                    #self.agent.load_agent_states()
+                    # self.agent.load_agent_states()
                     self.agent.actor.reset()
                     self.agent.critic.reset()
                     if losses and step_count % (self.update_frequency * 5) == 0:
@@ -311,22 +331,27 @@ if __name__ == "__main__":
     # Example configuration
     training_config = {
         "num_episodes": 50,
-        "batch_size": 256,
-        "buffer_seq_length": 128,  # Sequence length for SNN training
+        "batch_size": 128,
+        "buffer_seq_length": 15,  # Trajectory length for λ-returns
         "update_frequency": 10,
         "learning_rate": 1e-3,
-        "gamma": 0.99,
-        "hidden_dim": 64,
+        "gamma": 0.997,  # Discount factor for the reward
+        "discount_lambda": 0.95,  # return mixing factor
+        "hidden_dim": 32,
         "snn_time_steps": 1,
         "max_steps_per_episode": 1000,
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 0.75,
+        "threshold": 0.1,
         "learn_alpha": True,
         "learn_beta": True,
         "learn_threshold": True,
-        "visualize": False,
-        "dt_simulation": 0.002,
+        "visualize": True,
+        "dt_simulation": 0.02,
+        "weight_init_mean": 0.0,
+        "weight_init_std": 0.1,
+        "max_std": 2.0,
+        "min_std": 0.1,
     }
 
     trainer = ActorCriticTrainer(config=training_config)
