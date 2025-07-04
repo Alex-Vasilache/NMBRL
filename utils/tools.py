@@ -32,9 +32,6 @@ def lambda_return(reward, value, pcont, bootstrap, lambda_, axis):
         torch.cat([torch.ones_like(pcont[:1]), pcont[:-1]], 0), 0
     ).detach()
 
-    weights[0] = 0.0
-    weights[1] = 0.0
-
     return returns, weights
 
 

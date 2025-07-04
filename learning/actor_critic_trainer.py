@@ -7,6 +7,7 @@ import torch
 from collections import deque
 import sys
 import os
+from datetime import datetime
 
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -75,6 +76,10 @@ class ActorCriticTrainer:
         self.episode_rewards = []
         self.episode_lengths = []
         self.training_losses = []
+
+        # Model saving directory
+        self.save_dir = config.get("save_dir", "saved_models")
+        os.makedirs(self.save_dir, exist_ok=True)
 
     def collect_experience(
         self,
@@ -187,12 +192,89 @@ class ActorCriticTrainer:
         self.training_losses.append(losses)
         return losses
 
+    def save_models(self, episode=None):
+        """
+        Save the trained actor and critic models along with training configuration.
+
+        :param episode: Optional episode number to include in filename
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if episode is not None:
+            model_name = f"snn_actor_critic_ep{episode}_{timestamp}"
+        else:
+            model_name = f"snn_actor_critic_final_{timestamp}"
+
+        model_path = os.path.join(self.save_dir, model_name)
+        os.makedirs(model_path, exist_ok=True)
+
+        # Save actor model
+        torch.save(
+            {
+                "model_state_dict": self.agent.actor.state_dict(),
+                "optimizer_state_dict": self.agent.actor_optimizer.state_dict(),
+                "model_config": {
+                    "state_dim": self.agent.state_dim,
+                    "hidden_dim": self.agent.hidden_dim,
+                    "action_dim": self.agent.action_dim,
+                    "num_steps": self.agent.num_steps,
+                    "weight_init_mean": self.agent.weight_init_mean,
+                    "weight_init_std": self.agent.weight_init_std,
+                },
+            },
+            os.path.join(model_path, "actor.pth"),
+        )
+
+        # Save critic model
+        torch.save(
+            {
+                "model_state_dict": self.agent.critic.state_dict(),
+                "optimizer_state_dict": self.agent.critic_optimizer.state_dict(),
+                "model_config": {
+                    "state_dim": self.agent.state_dim,
+                    "hidden_dim": self.agent.hidden_dim,
+                    "output_dim": 1,
+                    "weight_init_mean": self.agent.weight_init_mean,
+                    "weight_init_std": self.agent.weight_init_std,
+                },
+            },
+            os.path.join(model_path, "critic.pth"),
+        )
+
+        # Save training configuration and statistics
+        training_info = {
+            "config": self.config,
+            "episode_rewards": self.episode_rewards,
+            "episode_lengths": self.episode_lengths,
+            "training_losses": self.training_losses,
+            "final_stats": {
+                "avg_episode_reward": (
+                    np.mean(self.episode_rewards) if self.episode_rewards else 0
+                ),
+                "avg_episode_length": (
+                    np.mean(self.episode_lengths) if self.episode_lengths else 0
+                ),
+                "best_episode_reward": (
+                    np.max(self.episode_rewards) if self.episode_rewards else 0
+                ),
+                "total_episodes": len(self.episode_rewards),
+            },
+        }
+
+        torch.save(training_info, os.path.join(model_path, "training_info.pth"))
+
+        print(f"Models saved to: {model_path}")
+        return model_path
+
     def train(self):
         """
         Runs the main training loop with proper learning updates.
         """
         num_episodes = self.config.get("num_episodes", 100)
         max_steps_per_episode = self.config.get("max_steps_per_episode", 1000)
+        save_frequency = self.config.get(
+            "save_frequency", None
+        )  # Save every N episodes
 
         print(f"Starting training for {num_episodes} episodes...")
         print(
@@ -261,6 +343,10 @@ class ActorCriticTrainer:
                     f"Avg Reward (last 10): {avg_reward:8.2f}"
                 )
 
+            # Save models periodically if requested
+            if save_frequency and (episode + 1) % save_frequency == 0:
+                self.save_models(episode=episode + 1)
+
         # Final training statistics
         print("\n=== Training Complete ===")
         print(f"Average Episode Reward: {np.mean(self.episode_rewards):.2f}")
@@ -272,7 +358,13 @@ class ActorCriticTrainer:
             print(f"Final Actor Loss: {final_losses['actor_loss']:.4f}")
             print(f"Final Critic Loss: {final_losses['critic_loss']:.4f}")
 
+        # Save final models
+        final_model_path = self.save_models()
+        print(f"Final models saved to: {final_model_path}")
+
         self.world_model.close()
+
+        return final_model_path
 
     def evaluate(self, num_episodes=10):
         """
@@ -331,27 +423,29 @@ if __name__ == "__main__":
     # Example configuration
     training_config = {
         "num_episodes": 50,
-        "batch_size": 128,
+        "batch_size": 512,
         "buffer_seq_length": 15,  # Trajectory length for λ-returns
-        "update_frequency": 10,
-        "learning_rate": 1e-3,
+        "update_frequency": 1,
+        "learning_rate": 1e-4,
         "gamma": 0.997,  # Discount factor for the reward
         "discount_lambda": 0.95,  # return mixing factor
-        "hidden_dim": 32,
+        "hidden_dim": 64,
         "snn_time_steps": 1,
         "max_steps_per_episode": 1000,
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 0.1,
-        "learn_alpha": True,
-        "learn_beta": True,
-        "learn_threshold": True,
+        "threshold": 1.0,
+        "learn_alpha": False,
+        "learn_beta": False,
+        "learn_threshold": False,
         "visualize": True,
         "dt_simulation": 0.02,
         "weight_init_mean": 0.0,
-        "weight_init_std": 0.1,
-        "max_std": 2.0,
+        "weight_init_std": 0.01,
+        "max_std": 1.0,
         "min_std": 0.1,
+        "save_dir": "saved_models",  # Directory to save trained models
+        "save_frequency": 10,  # Save models every N episodes (None to disable)
     }
 
     trainer = ActorCriticTrainer(config=training_config)

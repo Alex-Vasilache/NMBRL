@@ -209,6 +209,117 @@ class CriticSNN(nn.Module):
         )
 
 
+class CriticANN(nn.Module):
+    """
+    ANN for the Critic (Value Function).
+    Takes state as input and outputs a scalar value estimate.
+    """
+
+    def __init__(
+        self,
+        state_dim=6,
+        hidden_dim=128,
+        output_dim=1,
+        weight_init_mean=0.0,
+        weight_init_std=0.01,
+        max_std=2.0,
+        min_std=0.1,
+    ):
+        """
+        Initialize the Critic ANN.
+
+        :param state_dim: Dimension of the state space (default: 6 for CartPole)
+        :param hidden_dim: Number of hidden neurons in each layer
+        :param output_dim: Output dimension (1 for value function)
+        :param weight_init_mean: Mean for weight initialization
+        :param weight_init_std: Standard deviation for weight initialization
+        :param max_std: Maximum standard deviation for output
+        :param min_std: Minimum standard deviation for output
+        """
+        super(CriticANN, self).__init__()
+
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.weight_init_mean = weight_init_mean
+        self.weight_init_std = weight_init_std
+        self.max_std = max_std
+        self.min_std = min_std
+
+        # Define the network layers
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc1.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+        self.fc1.bias.data.zero_()
+
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc2.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+        self.fc2.bias.data.zero_()
+
+        # Output layers for mean and std
+        self.fc_mean = nn.Linear(hidden_dim, output_dim)
+        self.fc_mean.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+        self.fc_mean.bias.data.zero_()
+
+        self.fc_std = nn.Linear(hidden_dim, output_dim)
+        self.fc_std.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+        self.fc_std.bias.data.zero_()
+
+        # Activation function
+        self.relu = nn.ReLU()
+
+    def forward(self, state):
+        """
+        Forward pass through the Critic ANN.
+
+        :param state: Input state tensor of shape (batch_size, state_dim)
+        :return: Tuple of (value_mean, value_std)
+        """
+        # Forward pass through hidden layers
+        x = self.relu(self.fc1(state))
+        x = self.relu(self.fc2(x))
+
+        # Output value mean and std
+        value_mean = self.fc_mean(x)
+        value_std = self.fc_std(x)
+
+        # Apply activation functions to match CriticSNN behavior
+        value_mean = torch.tanh(value_mean)
+        value_std = (self.max_std - self.min_std) * torch.sigmoid(
+            value_std + 2.0
+        ) + self.min_std
+
+        return value_mean, value_std
+
+    def reset(self):
+        """
+        Reset method for interface compatibility with CriticSNN.
+        ANN doesn't need state reset but keeping for consistency.
+        """
+        pass
+
+    def get_states(self):
+        """
+        Get states method for interface compatibility with CriticSNN.
+        ANN doesn't have internal states but keeping for consistency.
+        """
+        return {}
+
+    def set_states(self, states):
+        """
+        Set states method for interface compatibility with CriticSNN.
+        ANN doesn't have internal states but keeping for consistency.
+        """
+        pass
+
+
 class ActorSNN(nn.Module):
     """
     Spiking Neural Network for the Actor (Policy).
@@ -471,17 +582,10 @@ class SnnActorCriticAgent(BaseAgent):
             weight_init_std=weight_init_std,
         )
 
-        self.critic = CriticSNN(
+        self.critic = CriticANN(
             state_dim=state_dim,
             hidden_dim=hidden_dim,
             output_dim=1,
-            num_steps=num_steps,
-            alpha=alpha,
-            beta=beta,
-            threshold=threshold,
-            learn_alpha=learn_alpha,
-            learn_beta=learn_beta,
-            learn_threshold=learn_threshold,
             weight_init_mean=weight_init_mean,
             weight_init_std=weight_init_std,
         )
