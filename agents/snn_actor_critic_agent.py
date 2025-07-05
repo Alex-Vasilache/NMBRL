@@ -222,8 +222,6 @@ class CriticANN(nn.Module):
         output_dim=1,
         weight_init_mean=0.0,
         weight_init_std=0.01,
-        max_std=2.0,
-        min_std=0.1,
     ):
         """
         Initialize the Critic ANN.
@@ -233,8 +231,6 @@ class CriticANN(nn.Module):
         :param output_dim: Output dimension (1 for value function)
         :param weight_init_mean: Mean for weight initialization
         :param weight_init_std: Standard deviation for weight initialization
-        :param max_std: Maximum standard deviation for output
-        :param min_std: Minimum standard deviation for output
         """
         super(CriticANN, self).__init__()
 
@@ -243,34 +239,22 @@ class CriticANN(nn.Module):
         self.output_dim = output_dim
         self.weight_init_mean = weight_init_mean
         self.weight_init_std = weight_init_std
-        self.max_std = max_std
-        self.min_std = min_std
 
         # Define the network layers
         self.fc1 = nn.Linear(state_dim, hidden_dim)
         self.fc1.weight.data.normal_(
             mean=self.weight_init_mean, std=self.weight_init_std
         )
-        self.fc1.bias.data.zero_()
 
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2.weight.data.normal_(
             mean=self.weight_init_mean, std=self.weight_init_std
         )
-        self.fc2.bias.data.zero_()
 
-        # Output layers for mean and std
-        self.fc_mean = nn.Linear(hidden_dim, output_dim)
-        self.fc_mean.weight.data.normal_(
+        self.fc_out = nn.Linear(hidden_dim, output_dim)
+        self.fc_out.weight.data.normal_(
             mean=self.weight_init_mean, std=self.weight_init_std
         )
-        self.fc_mean.bias.data.zero_()
-
-        self.fc_std = nn.Linear(hidden_dim, output_dim)
-        self.fc_std.weight.data.normal_(
-            mean=self.weight_init_mean, std=self.weight_init_std
-        )
-        self.fc_std.bias.data.zero_()
 
         # Activation function
         self.relu = nn.ReLU()
@@ -280,44 +264,16 @@ class CriticANN(nn.Module):
         Forward pass through the Critic ANN.
 
         :param state: Input state tensor of shape (batch_size, state_dim)
-        :return: Tuple of (value_mean, value_std)
+        :return: Value estimate tensor of shape (batch_size, 1)
         """
         # Forward pass through hidden layers
         x = self.relu(self.fc1(state))
         x = self.relu(self.fc2(x))
 
-        # Output value mean and std
-        value_mean = self.fc_mean(x)
-        value_std = self.fc_std(x)
+        value_out = self.fc_out(x)
+        value_out = -self.relu(value_out)
 
-        # Apply activation functions to match CriticSNN behavior
-        value_mean = torch.tanh(value_mean)
-        value_std = (self.max_std - self.min_std) * torch.sigmoid(
-            value_std + 2.0
-        ) + self.min_std
-
-        return value_mean, value_std
-
-    def reset(self):
-        """
-        Reset method for interface compatibility with CriticSNN.
-        ANN doesn't need state reset but keeping for consistency.
-        """
-        pass
-
-    def get_states(self):
-        """
-        Get states method for interface compatibility with CriticSNN.
-        ANN doesn't have internal states but keeping for consistency.
-        """
-        return {}
-
-    def set_states(self, states):
-        """
-        Set states method for interface compatibility with CriticSNN.
-        ANN doesn't have internal states but keeping for consistency.
-        """
-        pass
+        return value_out
 
 
 class ActorSNN(nn.Module):
@@ -692,12 +648,9 @@ class SnnActorCriticAgent(BaseAgent):
             state_tensor = torch.FloatTensor([state]).unsqueeze(0)
 
         with torch.no_grad():
-            value_mean, value_std = self.critic(state_tensor)
+            value_out = self.critic(state_tensor)
 
-            dist = torch.distributions.Normal(value_mean, value_std)
-            value = dist.sample()
-
-        return value.squeeze().item()
+        return value_out.squeeze().item()
 
     def compute_action_log_probs(self, states, rollout_actions):
         """
@@ -732,11 +685,9 @@ class SnnActorCriticAgent(BaseAgent):
 
     def save_agent_states(self):
         self.actor_states = self.actor.get_states()
-        self.critic_states = self.critic.get_states()
 
     def load_agent_states(self):
         self.actor.set_states(self.actor_states)
-        self.critic.set_states(self.critic_states)
 
     def update(
         self,
@@ -769,15 +720,10 @@ class SnnActorCriticAgent(BaseAgent):
         batch_size = states.shape[1]
         sequence_length = states.shape[0]
 
-        self.critic.reset()
-
-        values_dists = []
         values = []
         for i in range(sequence_length):
-            value_mean, value_std = self.critic(states[i])
-            value_dist = torch.distributions.Normal(value_mean, value_std)
-            values_dists.append(value_dist)
-            values.append(value_dist.mode)
+            value = self.critic(states[i])
+            values.append(value)
 
         values = torch.stack(values, dim=0)
 
@@ -793,12 +739,8 @@ class SnnActorCriticAgent(BaseAgent):
         target_values = torch.stack(target_values, dim=1)
 
         # These targets train the critic
-        critic_loss = -torch.stack(
-            [
-                values_dist.log_prob(target_value.detach())
-                for values_dist, target_value in zip(values_dists, target_values)
-            ],
-            dim=0,
+        critic_loss = torch.nn.functional.mse_loss(
+            values[:-1], target_values.detach(), reduction="none"
         )
         critic_loss = torch.mean(weights * critic_loss)
 

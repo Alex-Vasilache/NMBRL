@@ -8,7 +8,6 @@ import os
 import sys
 import argparse
 from collections import deque
-import time
 
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -102,13 +101,12 @@ class ModelEvaluator:
 
         print("Models loaded successfully!")
 
-    def evaluate(self, num_episodes=10, max_steps_per_episode=10000, render_delay=0.02):
+    def evaluate(self, num_episodes=10, max_steps_per_episode=10000):
         """
         Evaluate the loaded model over multiple episodes.
 
         :param num_episodes: Number of evaluation episodes
         :param max_steps_per_episode: Maximum steps per episode
-        :param render_delay: Delay between visualization frames (seconds)
         :return: Dictionary with evaluation results
         """
         print(f"\n=== Evaluating Model over {num_episodes} episodes ===")
@@ -127,7 +125,6 @@ class ModelEvaluator:
 
             # Reset agent states
             self.agent.actor.reset()
-            self.agent.critic.reset()
 
             # Store trajectory for analysis
             trajectory = {"states": [], "actions": [], "rewards": [], "values": []}
@@ -146,10 +143,6 @@ class ModelEvaluator:
                 next_state, reward, terminated, info = self.world_model.step(action)
 
                 trajectory["rewards"].append(reward)
-
-                # Add visualization delay if enabled
-                if self.visualize and render_delay > 0:
-                    time.sleep(render_delay)
 
                 state = next_state
                 total_reward += reward
@@ -356,12 +349,6 @@ def main():
         "--no-visualize", action="store_true", help="Disable environment visualization"
     )
     parser.add_argument(
-        "--render-delay",
-        type=float,
-        default=0.02,
-        help="Delay between frames during visualization",
-    )
-    parser.add_argument(
         "--plot-training", action="store_true", help="Plot training progress"
     )
     parser.add_argument(
@@ -384,9 +371,7 @@ def main():
         evaluator.plot_training_progress(save_path=save_path)
 
     # Run evaluation
-    results = evaluator.evaluate(
-        num_episodes=args.episodes, render_delay=args.render_delay
-    )
+    results = evaluator.evaluate(num_episodes=args.episodes)
 
     # Plot evaluation results
     save_path = None

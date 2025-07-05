@@ -8,6 +8,7 @@ from collections import deque
 import sys
 import os
 from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -81,6 +82,42 @@ class ActorCriticTrainer:
         # Model saving directory
         self.save_dir = config.get("save_dir", "saved_models")
         os.makedirs(self.save_dir, exist_ok=True)
+
+        # TensorBoard logging setup
+        self.log_dir = config.get("log_dir", "runs")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.tb_log_dir = os.path.join(self.log_dir, f"snn_actor_critic_{timestamp}")
+        self.writer = SummaryWriter(log_dir=self.tb_log_dir)
+        self.global_step = 0
+        self.training_step = 0
+
+        print(f"TensorBoard logs will be saved to: {self.tb_log_dir}")
+        print(f"To view logs, run: tensorboard --logdir {self.log_dir}")
+
+        # Log hyperparameters to TensorBoard
+        hparam_dict = {
+            "learning_rate": config.get("learning_rate", 1e-3),
+            "batch_size": self.batch_size,
+            "buffer_seq_length": self.buffer_seq_length,
+            "update_frequency": self.update_frequency,
+            "gamma": self.gamma,
+            "discount_lambda": self.discount_lambda,
+            "hidden_dim": self.agent.hidden_dim,
+            "snn_time_steps": self.agent.num_steps,
+            "alpha": config.get("alpha", 0.9),
+            "beta": config.get("beta", 0.9),
+            "threshold": config.get("threshold", 1),
+            "weight_init_mean": config.get("weight_init_mean", 0.0),
+            "weight_init_std": config.get("weight_init_std", 0.01),
+            "max_std": config.get("max_std", 2.0),
+            "min_std": config.get("min_std", 0.1),
+        }
+        metric_dict = {
+            "final_avg_reward": 0.0,  # Will be updated at the end of training
+            "final_best_reward": 0.0,
+            "total_episodes": config.get("num_episodes", 100),
+        }
+        self.writer.add_hparams(hparam_dict, metric_dict)
 
     def collect_experience(
         self,
@@ -191,6 +228,20 @@ class ActorCriticTrainer:
         )
 
         self.training_losses.append(losses)
+
+        # Log losses to TensorBoard
+        if losses:
+            self.writer.add_scalar(
+                "Loss/Actor", losses["actor_loss"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Loss/Critic", losses["critic_loss"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Value/Mean_Value", losses["mean_value"], self.training_step
+            )
+            self.training_step += 1
+
         return losses
 
     def save_models(self, episode=None):
@@ -289,7 +340,6 @@ class ActorCriticTrainer:
             step_count = 0
 
             self.agent.actor.reset()
-            self.agent.critic.reset()
 
             # Episode rollout
             while not terminated and step_count < max_steps_per_episode:
@@ -316,7 +366,6 @@ class ActorCriticTrainer:
                     losses = self.train_agent()
                     # self.agent.load_agent_states()
                     self.agent.actor.reset()
-                    self.agent.critic.reset()
                     if losses and step_count % (self.update_frequency * 5) == 0:
                         print(
                             f"  Step {step_count}: Actor Loss: {losses['actor_loss']:.4f}, "
@@ -332,6 +381,28 @@ class ActorCriticTrainer:
             self.episode_rewards.append(total_reward)
             self.episode_lengths.append(step_count)
 
+            # Log episode metrics to TensorBoard
+            self.writer.add_scalar("Episode/Reward", total_reward, episode)
+            self.writer.add_scalar("Episode/Length", step_count, episode)
+            self.writer.add_scalar("Episode/Global_Step", self.global_step, episode)
+
+            # Calculate and log running averages
+            if len(self.episode_rewards) >= 10:
+                avg_reward_10 = np.mean(self.episode_rewards[-10:])
+                avg_length_10 = np.mean(self.episode_lengths[-10:])
+                self.writer.add_scalar("Episode/Avg_Reward_10", avg_reward_10, episode)
+                self.writer.add_scalar("Episode/Avg_Length_10", avg_length_10, episode)
+
+            if len(self.episode_rewards) >= 100:
+                avg_reward_100 = np.mean(self.episode_rewards[-100:])
+                avg_length_100 = np.mean(self.episode_lengths[-100:])
+                self.writer.add_scalar(
+                    "Episode/Avg_Reward_100", avg_reward_100, episode
+                )
+                self.writer.add_scalar(
+                    "Episode/Avg_Length_100", avg_length_100, episode
+                )
+
             # Print episode results
             if episode % 10 == 0 or episode < 10:
                 avg_reward = (
@@ -344,20 +415,43 @@ class ActorCriticTrainer:
                     f"Avg Reward (last 10): {avg_reward:8.2f}"
                 )
 
+            self.global_step += step_count
+
             # Save models periodically if requested
             if save_frequency and (episode + 1) % save_frequency == 0:
                 self.save_models(episode=episode + 1)
 
         # Final training statistics
         print("\n=== Training Complete ===")
-        print(f"Average Episode Reward: {np.mean(self.episode_rewards):.2f}")
-        print(f"Average Episode Length: {np.mean(self.episode_lengths):.1f}")
-        print(f"Best Episode Reward: {np.max(self.episode_rewards):.2f}")
+        avg_reward = np.mean(self.episode_rewards)
+        avg_length = np.mean(self.episode_lengths)
+        best_reward = np.max(self.episode_rewards)
+
+        print(f"Average Episode Reward: {avg_reward:.2f}")
+        print(f"Average Episode Length: {avg_length:.1f}")
+        print(f"Best Episode Reward: {best_reward:.2f}")
+
+        # Log final training statistics to TensorBoard
+        self.writer.add_scalar("Training/Final_Avg_Reward", avg_reward, num_episodes)
+        self.writer.add_scalar("Training/Final_Avg_Length", avg_length, num_episodes)
+        self.writer.add_scalar("Training/Best_Reward", best_reward, num_episodes)
+        self.writer.add_scalar("Training/Total_Steps", self.global_step, num_episodes)
 
         if self.training_losses:
             final_losses = self.training_losses[-1]
             print(f"Final Actor Loss: {final_losses['actor_loss']:.4f}")
             print(f"Final Critic Loss: {final_losses['critic_loss']:.4f}")
+
+            self.writer.add_scalar(
+                "Training/Final_Actor_Loss", final_losses["actor_loss"], num_episodes
+            )
+            self.writer.add_scalar(
+                "Training/Final_Critic_Loss", final_losses["critic_loss"], num_episodes
+            )
+
+        # Close TensorBoard writer
+        self.writer.close()
+        print(f"TensorBoard logs saved to: {self.tb_log_dir}")
 
         # Save final models
         final_model_path = self.save_models()
@@ -366,6 +460,12 @@ class ActorCriticTrainer:
         self.world_model.close()
 
         return final_model_path
+
+    def close_tensorboard(self):
+        """Close the TensorBoard writer."""
+        if hasattr(self, "writer") and self.writer is not None:
+            self.writer.close()
+            print(f"TensorBoard writer closed. Logs saved to: {self.tb_log_dir}")
 
     def evaluate(self, num_episodes=10):
         """
@@ -377,7 +477,6 @@ class ActorCriticTrainer:
         self.agent.actor.eval()
         self.agent.critic.eval()
         self.agent.actor.reset()
-        self.agent.critic.reset()
 
         eval_rewards = []
         eval_lengths = []
@@ -407,13 +506,24 @@ class ActorCriticTrainer:
         self.agent.actor.train()
         self.agent.critic.train()
 
+        # Calculate evaluation statistics
+        eval_avg_reward = np.mean(eval_rewards)
+        eval_std_reward = np.std(eval_rewards)
+        eval_avg_length = np.mean(eval_lengths)
+        eval_std_length = np.std(eval_lengths)
+
         print(f"Evaluation Results:")
-        print(
-            f"  Average Reward: {np.mean(eval_rewards):.2f} ± {np.std(eval_rewards):.2f}"
-        )
-        print(
-            f"  Average Length: {np.mean(eval_lengths):.1f} ± {np.std(eval_lengths):.1f}"
-        )
+        print(f"  Average Reward: {eval_avg_reward:.2f} ± {eval_std_reward:.2f}")
+        print(f"  Average Length: {eval_avg_length:.1f} ± {eval_std_length:.1f}")
+
+        # Log evaluation results to TensorBoard
+        if hasattr(self, "writer") and self.writer is not None:
+            self.writer.add_scalar("Evaluation/Avg_Reward", eval_avg_reward, 0)
+            self.writer.add_scalar("Evaluation/Std_Reward", eval_std_reward, 0)
+            self.writer.add_scalar("Evaluation/Avg_Length", eval_avg_length, 0)
+            self.writer.add_scalar("Evaluation/Std_Length", eval_std_length, 0)
+            self.writer.add_scalar("Evaluation/Best_Reward", np.max(eval_rewards), 0)
+            self.writer.add_scalar("Evaluation/Worst_Reward", np.min(eval_rewards), 0)
 
         self.world_model.close()
 
@@ -423,29 +533,30 @@ class ActorCriticTrainer:
 if __name__ == "__main__":
     # Example configuration
     training_config = {
-        "num_episodes": 50,
+        "num_episodes": 100,
         "batch_size": 512,
         "buffer_seq_length": 15,  # Trajectory length for λ-returns
-        "update_frequency": 10,
-        "learning_rate": 1e-4,
+        "update_frequency": 3,
+        "learning_rate": 1e-5,
         "gamma": 0.997,  # Discount factor for the reward
         "discount_lambda": 0.95,  # return mixing factor
-        "hidden_dim": 64,
+        "hidden_dim": 32,
         "snn_time_steps": 1,
-        "max_steps_per_episode": 10000,
+        "max_steps_per_episode": 1000,
         "alpha": 0.9,
         "beta": 0.9,
-        "threshold": 1.0,
-        "learn_alpha": False,
-        "learn_beta": False,
-        "learn_threshold": False,
-        "visualize": True,
+        "threshold": 0.01,
+        "learn_alpha": True,
+        "learn_beta": True,
+        "learn_threshold": True,
+        "visualize": False,
         "dt_simulation": 0.02,
-        "weight_init_mean": 0.0,
-        "weight_init_std": 0.01,
+        "weight_init_mean": 0.03,
+        "weight_init_std": 0.03,
         "max_std": 1.0,
-        "min_std": 0.1,
+        "min_std": 0.01,
         "save_dir": "saved_models",  # Directory to save trained models
+        "log_dir": "runs",  # Directory for TensorBoard logs
         "save_frequency": 10,  # Save models every N episodes (None to disable)
     }
 
