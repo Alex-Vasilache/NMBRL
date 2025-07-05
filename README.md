@@ -256,3 +256,56 @@ The core of the issue lies in the fact that each neuron in an SNN maintains an i
 *   **Continuous Trajectories:** The training process must use **continuous, long trajectories** of imagined experience. This allows the hidden states of the SNN world model to evolve naturally from one step to the next. The same principle applies to the SNN actor and critic, which must also process these state sequences to produce stable actions and value estimates.
 
 This requirement contrasts with many traditional MBRL implementations where the collected experience `(s, a, s', r)` can be stored in a replay buffer and sampled randomly for training. For our SNN-based approach, the *sequence* of experience is just as important as the individual data points. The training loops (`ActorCriticTrainer` and `WorldModelTrainer`) must be designed to generate and train on these unbroken, sequential rollouts from the world model.
+
+## 7. Usage and Monitoring
+
+### 7.1 TensorBoard Integration for Actor-Critic Training
+
+The `ActorCriticTrainer` includes integrated TensorBoard logging to monitor training progress in real-time. This provides detailed insights into loss curves, episode performance, and hyperparameter effects.
+
+#### Viewing Training Logs
+
+1. **Start Training**: When you run the trainer, it will automatically create timestamped log directories:
+   ```
+   runs/snn_actor_critic_20240104_143022/
+   ```
+
+2. **Launch TensorBoard**: In a separate terminal, navigate to your project directory and run:
+   ```bash
+   tensorboard --logdir runs
+   ```
+
+3. **Open Dashboard**: Navigate to `http://localhost:6006` in your web browser to view the training dashboard.
+
+
+### 7.2 Model Visualization and Evaluation
+
+#### Trained Model Storage
+
+Trained models are automatically saved during training with the following structure:
+```
+saved_models/
+├── snn_actor_critic_ep10_20240104_143022/
+│   ├── actor.pth          # Actor network weights and config
+│   ├── critic.pth         # Critic network weights and config
+│   └── training_info.pth  # Training statistics and configuration
+└── snn_actor_critic_final_20240104_143022/
+    ├── actor.pth
+    ├── critic.pth
+    └── training_info.pth
+```
+
+#### Using the Visualization Script
+
+The `visualize_and_evaluate.py` script provides capabilities for loading and evaluating trained models:
+
+```python
+# Load and evaluate a trained model
+python visualize_and_evaluate.py --model_path saved_models/snn_actor_critic_final_20240104_143022
+
+# Evaluate with visualization enabled
+python visualize_and_evaluate.py --model_path saved_models/snn_actor_critic_final_20240104_143022 --visualize
+
+# Run multiple evaluation episodes
+python visualize_and_evaluate.py --model_path saved_models/snn_actor_critic_final_20240104_143022 --num_episodes 20
+```

@@ -209,6 +209,73 @@ class CriticSNN(nn.Module):
         )
 
 
+class CriticANN(nn.Module):
+    """
+    ANN for the Critic (Value Function).
+    Takes state as input and outputs a scalar value estimate.
+    """
+
+    def __init__(
+        self,
+        state_dim=6,
+        hidden_dim=128,
+        output_dim=1,
+        weight_init_mean=0.0,
+        weight_init_std=0.01,
+    ):
+        """
+        Initialize the Critic ANN.
+
+        :param state_dim: Dimension of the state space (default: 6 for CartPole)
+        :param hidden_dim: Number of hidden neurons in each layer
+        :param output_dim: Output dimension (1 for value function)
+        :param weight_init_mean: Mean for weight initialization
+        :param weight_init_std: Standard deviation for weight initialization
+        """
+        super(CriticANN, self).__init__()
+
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.weight_init_mean = weight_init_mean
+        self.weight_init_std = weight_init_std
+
+        # Define the network layers
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc1.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc2.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+
+        self.fc_out = nn.Linear(hidden_dim, output_dim)
+        self.fc_out.weight.data.normal_(
+            mean=self.weight_init_mean, std=self.weight_init_std
+        )
+
+        # Activation function
+        self.relu = nn.ReLU()
+
+    def forward(self, state):
+        """
+        Forward pass through the Critic ANN.
+
+        :param state: Input state tensor of shape (batch_size, state_dim)
+        :return: Value estimate tensor of shape (batch_size, 1)
+        """
+        # Forward pass through hidden layers
+        x = self.relu(self.fc1(state))
+        x = self.relu(self.fc2(x))
+
+        value_out = self.fc_out(x)
+        value_out = -self.relu(value_out)
+
+        return value_out
+
+
 class ActorSNN(nn.Module):
     """
     Spiking Neural Network for the Actor (Policy).
@@ -308,6 +375,24 @@ class ActorSNN(nn.Module):
             mean=self.weight_init_mean, std=self.weight_init_std
         )
 
+        self.li_mean = snn.Synaptic(
+            alpha=alpha,
+            beta=beta,
+            learn_alpha=learn_alpha,
+            learn_beta=learn_beta,
+            spike_grad=surrogate.fast_sigmoid(),
+            reset_mechanism="none",
+        )
+
+        self.li_std = snn.Synaptic(
+            alpha=alpha,
+            beta=beta,
+            learn_alpha=learn_alpha,
+            learn_beta=learn_beta,
+            spike_grad=surrogate.fast_sigmoid(),
+            reset_mechanism="none",
+        )
+
         self.reset()
 
     def forward(self, state):
@@ -345,14 +430,17 @@ class ActorSNN(nn.Module):
 
         avg_spikes = torch.stack(spk_rec, dim=0).mean(dim=0)
 
-        # Output action parameters
-        action_mean = self.fc_mean(avg_spikes)
-        action_std = self.fc_std(avg_spikes)
+        cur_mean = self.fc_mean(avg_spikes)
+        cur_std = self.fc_std(avg_spikes)
+        _, self.syn_mean, self.mem_mean = self.li_mean(
+            cur_mean, self.syn_mean, self.mem_mean
+        )
+        _, self.syn_std, self.mem_std = self.li_std(cur_std, self.syn_std, self.mem_std)
 
-        action_mean = torch.tanh(action_mean)
+        action_mean = torch.tanh(self.mem_mean)
 
         action_std = (self.max_std - self.min_std) * torch.sigmoid(
-            action_std + 2.0
+            self.mem_std + 2.0
         ) + self.min_std
 
         return action_mean, action_std
@@ -360,6 +448,8 @@ class ActorSNN(nn.Module):
     def reset(self):
         self.syn1, self.mem1 = self.lif1.init_synaptic()
         self.syn2, self.mem2 = self.lif2.init_synaptic()
+        self.syn_mean, self.mem_mean = self.li_mean.init_synaptic()
+        self.syn_std, self.mem_std = self.li_std.init_synaptic()
         self.spk1 = None
         self.spk2 = None
 
@@ -371,6 +461,10 @@ class ActorSNN(nn.Module):
             "mem2": self.mem2,
             "spk1": self.spk1,
             "spk2": self.spk2,
+            "syn_mean": self.syn_mean,
+            "mem_mean": self.mem_mean,
+            "syn_std": self.syn_std,
+            "mem_std": self.mem_std,
         }
 
     def set_states(self, states):
@@ -411,6 +505,26 @@ class ActorSNN(nn.Module):
                 if states[0]["spk2"] is None
                 else torch.stack([states[i]["spk2"] for i in range(len(states))])
             )
+        )
+        self.syn_mean = (
+            states["syn_mean"]
+            if type(states) == type({})
+            else torch.stack([states[i]["syn_mean"] for i in range(len(states))])
+        )
+        self.mem_mean = (
+            states["mem_mean"]
+            if type(states) == type({})
+            else torch.stack([states[i]["mem_mean"] for i in range(len(states))])
+        )
+        self.syn_std = (
+            states["syn_std"]
+            if type(states) == type({})
+            else torch.stack([states[i]["syn_std"] for i in range(len(states))])
+        )
+        self.mem_std = (
+            states["mem_std"]
+            if type(states) == type({})
+            else torch.stack([states[i]["mem_std"] for i in range(len(states))])
         )
 
 
@@ -471,17 +585,10 @@ class SnnActorCriticAgent(BaseAgent):
             weight_init_std=weight_init_std,
         )
 
-        self.critic = CriticSNN(
+        self.critic = CriticANN(
             state_dim=state_dim,
             hidden_dim=hidden_dim,
             output_dim=1,
-            num_steps=num_steps,
-            alpha=alpha,
-            beta=beta,
-            threshold=threshold,
-            learn_alpha=learn_alpha,
-            learn_beta=learn_beta,
-            learn_threshold=learn_threshold,
             weight_init_mean=weight_init_mean,
             weight_init_std=weight_init_std,
         )
@@ -541,12 +648,9 @@ class SnnActorCriticAgent(BaseAgent):
             state_tensor = torch.FloatTensor([state]).unsqueeze(0)
 
         with torch.no_grad():
-            value_mean, value_std = self.critic(state_tensor)
+            value_out = self.critic(state_tensor)
 
-            dist = torch.distributions.Normal(value_mean, value_std)
-            value = dist.sample()
-
-        return value.squeeze().item()
+        return value_out.squeeze().item()
 
     def compute_action_log_probs(self, states, rollout_actions):
         """
@@ -581,11 +685,9 @@ class SnnActorCriticAgent(BaseAgent):
 
     def save_agent_states(self):
         self.actor_states = self.actor.get_states()
-        self.critic_states = self.critic.get_states()
 
     def load_agent_states(self):
         self.actor.set_states(self.actor_states)
-        self.critic.set_states(self.critic_states)
 
     def update(
         self,
@@ -618,15 +720,10 @@ class SnnActorCriticAgent(BaseAgent):
         batch_size = states.shape[1]
         sequence_length = states.shape[0]
 
-        self.critic.reset()
-
-        values_dists = []
         values = []
         for i in range(sequence_length):
-            value_mean, value_std = self.critic(states[i])
-            value_dist = torch.distributions.Normal(value_mean, value_std)
-            values_dists.append(value_dist)
-            values.append(value_dist.mode)
+            value = self.critic(states[i])
+            values.append(value)
 
         values = torch.stack(values, dim=0)
 
@@ -642,12 +739,8 @@ class SnnActorCriticAgent(BaseAgent):
         target_values = torch.stack(target_values, dim=1)
 
         # These targets train the critic
-        critic_loss = -torch.stack(
-            [
-                values_dist.log_prob(target_value.detach())
-                for values_dist, target_value in zip(values_dists, target_values)
-            ],
-            dim=0,
+        critic_loss = torch.nn.functional.mse_loss(
+            values[:-1], target_values.detach(), reduction="none"
         )
         critic_loss = torch.mean(weights * critic_loss)
 

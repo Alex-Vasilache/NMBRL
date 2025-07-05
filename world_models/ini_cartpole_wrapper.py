@@ -174,10 +174,12 @@ class INICartPoleWrapper(BaseWorldModel):
         )
 
         # Extract scalar cost value
-        total_cost = float(stage_cost[0, 0])
+        total_cost = float(stage_cost[0, 0]) / self.max_cost
+
+        total_cost = 1 / (1 + np.exp(-total_cost))
 
         # Convert cost to reward (negative cost); normalize the cost to be between 0 and 1
-        reward = -total_cost / self.max_cost
+        reward = -total_cost
 
         # For debugging, compute individual components with correct weights
         try:
@@ -247,9 +249,7 @@ class INICartPoleWrapper(BaseWorldModel):
         )
 
         # Normalize angle: [-pi, pi] -> [0, 1]
-        normalized_state[self.ANGLE_IDX] = (state[self.ANGLE_IDX] + np.pi) / (
-            2 * np.pi
-        )
+        normalized_state[self.ANGLE_IDX] = (state[self.ANGLE_IDX] + np.pi) / (2 * np.pi)
 
         # Normalize angleD: [-max_angular_velocity, max_angular_velocity] -> [0, 1]
         angleD_clamped = np.clip(
