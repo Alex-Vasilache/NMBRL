@@ -114,7 +114,7 @@ The project can be broken down into the following phases and tasks. This structu
 |                            | T1.3    |   ✅    | **Implement Environment Wrapper:** Create a concrete `WorldModel` by wrapping the existing `CartPole` simulation. This allows agent development to begin immediately.                                   | `ini_cartpole_wrapper.py`                | T1.2                            |
 | **2. Actor-Critic Module** | T2.1    |   -    | **Initial SNN Actor-Critic Agent:** Implement an `SnnActorCriticAgent` class with a basic SNN structure.                                                                                                | `snn_actor_critic_agent.py`              | T1.2                            |
 |                            | T2.2    |   -    | **Actor-Critic Trainer:** Create the training loop that has the agent interact with the `WorldModel` interface (using the `EnvironmentWrapper` for now).                                                | `actor_critic_trainer.py`, `run_mbrl.py` | T1.3, T2.1                      |
-|                            | T2.3    |   -    | **Implement Sparse RTRL:** Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                    | `actor_critic_trainer.py`                | T2.2                            |
+|                            | (T2.3)  |   -    | (**Implement Sparse RTRL:**) Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                  | `actor_critic_trainer.py`                | T2.2                            |
 | **3. World Model Module**  | T3.1    |   -    | **SNN World Model:** Implement the `SNNWorldModel` class. Initially, this can be a simple recurrent SNN architecture.                                                                                   | `snn_world_model.py`                     | T1.2                            |
 |                            | T3.2    |   -    | **World Model Trainer:** Implement the training loop for the `SNNWorldModel`. It should sample data from the real environment and train the SNN to predict `(s', r) = f(s, a)`.                         | `world_model_trainer.py`                 | `ini_cartpole_wrapper.py`, T3.1 |
 | **4. Integration**         | T4.1    |   -    | **Full Pipeline Integration:** Update `run_mbrl.py` to run both training modules. The `ActorCriticTrainer` should be configured to use the trained `SNNWorldModel` instead of the `EnvironmentWrapper`. | `run_mbrl.py`                            | T2.3, T3.2                      |
@@ -136,7 +136,7 @@ graph TD;
     subgraph "Phase 2: Actor-Critic Module (Parallel)"
         T2_1["T2.1<br/>Initial SNN Actor-Critic Agent"];
         T2_2["T2.2<br/>Actor-Critic Trainer"];
-        T2_3["T2.3<br/>Implement Sparse RTRL"];
+        T2_3["(T2.3)<br/>Implement Sparse RTRL"];
         T2_1 --> T2_2;
         T2_2 --> T2_3;
     end
