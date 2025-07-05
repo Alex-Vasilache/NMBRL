@@ -15,3 +15,5 @@ eggs/
 *.egg-info/
 *.egg
 .idea/*
+*.tfevents.*
+*.pth
