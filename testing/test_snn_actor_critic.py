@@ -12,7 +12,7 @@ import os
 # Add the project root to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agents.snn_actor_critic_agent import CriticSNN, ActorSNN, SnnActorCriticAgent
+from agents.snn_actor_critic_agent import CriticSNN, ActorSNN, ActorCriticAgent
 from world_models.ini_cartpole_wrapper import INICartPoleWrapper
 
 
@@ -75,7 +75,7 @@ def test_agent_integration():
         env = INICartPoleWrapper()
 
         # Initialize agent
-        agent = SnnActorCriticAgent(
+        agent = ActorCriticAgent(
             action_space=env.env.action_space, state_dim=6, hidden_dim=64, num_steps=10
         )
 

@@ -9,12 +9,13 @@ import sys
 import os
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
+import yaml
 
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from world_models.ini_cartpole_wrapper import INICartPoleWrapper
-from agents.snn_actor_critic_agent import SnnActorCriticAgent
+from agents.actor_critic_agent import ActorCriticAgent
 
 
 class ActorCriticTrainer:
@@ -31,48 +32,38 @@ class ActorCriticTrainer:
         """
         self.config = config
         self.world_model = INICartPoleWrapper(
-            max_steps=config.get("max_steps_per_episode", 10000),
-            visualize=config.get("visualize", False),
-            dt_simulation=config.get("dt_simulation", 0.02),
+            max_steps=config.get("max_steps_per_episode"),
+            visualize=config.get("visualize"),
+            dt_simulation=config.get("dt_simulation"),
         )
 
-        # Initialize the SNN agent
-        action_space = self.world_model.env.action_space
-        self.agent = SnnActorCriticAgent(
-            action_space=action_space,
-            state_dim=config.get("state_dim", 6),
-            hidden_dim=config.get("hidden_dim", 128),
-            num_steps=config.get("snn_time_steps", 1),
-            lr=config.get("learning_rate", 1e-3),
-            alpha=config.get("alpha", 0.9),
-            beta=config.get("beta", 0.9),
-            threshold=config.get("threshold", 1),
-            learn_alpha=config.get("learn_alpha", True),
-            learn_beta=config.get("learn_beta", True),
-            learn_threshold=config.get("learn_threshold", True),
-            weight_init_mean=config.get("weight_init_mean", 0.0),
-            weight_init_std=config.get("weight_init_std", 0.01),
-            max_std=config.get("max_std", 2.0),
-            min_std=config.get("min_std", 0.1),
+        # Initialize the Actor-Critic agent
+        self.action_space = self.world_model.env.action_space
+        self.state_dim = self.world_model.env.observation_space.shape[0]
+        self.agent = ActorCriticAgent(
+            config=config,
+            state_dim=self.state_dim,
+            action_dim=self.action_space,
+            lr=config.get("learning_rate"),
         )
 
         # Training parameters
-        self.batch_size = config.get("batch_size", 32)
-        self.buffer_seq_length = config.get("buffer_seq_length", 15)
-        self.update_frequency = config.get("update_frequency", 10)
-        self.gamma = config.get("gamma", 0.997)
-        self.discount_lambda = config.get("discount_lambda", 0.95)
+        self.batch_size = config.get("batch_size")
+        self.imag_horizon = config.get("imag_horizon")
+        self.update_frequency = config.get("update_frequency")
+        self.gamma = config.get("gamma")
+        self.discount_lambda = config.get("discount_lambda")
 
-        # Experience buffer for batch training
-        self.experience_buffer = {
+        # Imagined trajectories for batch training
+        self.imagined_trajectories = {
             "states": [],
             "actions": [],
             "rewards": [],
-            "next_states": [],
-            "dones": [],
         }
 
-        self.viable_sequence_starts = []
+        self.initial_state_buffer = deque(
+            maxlen=config.get("num_episodes") * config.get("batch_size")
+        )
 
         # Training statistics
         self.episode_rewards = []
@@ -80,11 +71,11 @@ class ActorCriticTrainer:
         self.training_losses = []
 
         # Model saving directory
-        self.save_dir = config.get("save_dir", "saved_models")
+        self.save_dir = config.get("save_dir")
         os.makedirs(self.save_dir, exist_ok=True)
 
         # TensorBoard logging setup
-        self.log_dir = config.get("log_dir", "runs")
+        self.log_dir = config.get("log_dir")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.tb_log_dir = os.path.join(self.log_dir, f"snn_actor_critic_{timestamp}")
         self.writer = SummaryWriter(log_dir=self.tb_log_dir)
@@ -96,21 +87,16 @@ class ActorCriticTrainer:
 
         # Log hyperparameters to TensorBoard
         hparam_dict = {
-            "learning_rate": config.get("learning_rate", 1e-3),
+            "learning_rate": config.get("learning_rate"),
             "batch_size": self.batch_size,
-            "buffer_seq_length": self.buffer_seq_length,
+            "imag_horizon": self.imag_horizon,
             "update_frequency": self.update_frequency,
             "gamma": self.gamma,
             "discount_lambda": self.discount_lambda,
-            "hidden_dim": self.agent.hidden_dim,
-            "snn_time_steps": self.agent.num_steps,
-            "alpha": config.get("alpha", 0.9),
-            "beta": config.get("beta", 0.9),
-            "threshold": config.get("threshold", 1),
-            "weight_init_mean": config.get("weight_init_mean", 0.0),
-            "weight_init_std": config.get("weight_init_std", 0.01),
-            "max_std": config.get("max_std", 2.0),
-            "min_std": config.get("min_std", 0.1),
+            "units": config.get("units"),
+            "layers": config.get("actor")["layers"],
+            "act": config.get("act"),
+            "norm": config.get("norm"),
         }
         metric_dict = {
             "final_avg_reward": 0.0,  # Will be updated at the end of training
@@ -119,100 +105,72 @@ class ActorCriticTrainer:
         }
         self.writer.add_hparams(hparam_dict, metric_dict)
 
-    def collect_experience(
+        self.prefill_initial_state_buffer()
+
+    def prefill_initial_state_buffer(self):
+        # TODO: fill with initial states from the actual environment (replay buffer of the world model)
+        """Prefill the initial state buffer with random sampled states."""
+        print(
+            f"Prefilling initial state buffer with {self.config.get('num_epochs') * self.config.get('batch_size')} states..."
+        )
+
+        sequential_states = []
+
+        step_count = 0
+        state = self.world_model.reset()
+        sequential_states.append(state)
+
+        while len(sequential_states) < self.config.get("batch_size"):
+            if step_count < self.config.get("max_steps_per_episode"):
+                action = np.random.uniform(
+                    self.action_space.low, self.action_space.high
+                )
+                state, _, _, _ = self.world_model.step(action)
+                sequential_states.append(state)
+                step_count += 1
+            else:
+                step_count = 0
+                state = self.world_model.reset()
+                sequential_states.append(state)
+
+        # Shuffle the sequential states
+        np.random.shuffle(sequential_states)
+        self.initial_state_buffer.extend(sequential_states)
+
+    def store_trajectory(
         self,
         state,
         action,
         reward,
-        next_state,
-        done,
     ):
         """Store experience in the buffer."""
-        self.experience_buffer["states"].append(state.copy())  # s at [t]
-        self.experience_buffer["actions"].append(action.copy())  # a at [t]
-        self.experience_buffer["rewards"].append(reward)  # r at [t]
-        self.experience_buffer["next_states"].append(next_state.copy())  # s at [t+1]
-        self.experience_buffer["dones"].append(done)  # done at [t]
-        self.viable_sequence_starts.append(len(self.experience_buffer["states"]) - 1)
+        self.imagined_trajectories["states"].append(state.copy())  # s at [t]
+        self.imagined_trajectories["actions"].append(action.copy())  # a at [t]
+        self.imagined_trajectories["rewards"].append(reward)  # r at [t]
 
-    def can_train(self):
-        """Check if we have enough experience to perform training."""
-        # Need enough data to sample unique overlapping batch_size sequences of length buffer_seq_length
-        min_buffer_size = self.buffer_seq_length + self.batch_size - 1
-        return len(self.viable_sequence_starts) >= min_buffer_size
-
-    def sample_batch(self):
-        """
-        Sample a batch of overlapping but unique sequences for SNN training.
-        Returns batch_size sequences of length buffer_seq_length..
-        """
-        buffer_size = len(self.viable_sequence_starts)
-
-        # Calculate maximum possible starting positions for sequences
-        max_start_idx = max(self.viable_sequence_starts) - self.buffer_seq_length + 1
-
-        max_viable_start_idx = 0
-        while self.viable_sequence_starts[max_viable_start_idx] <= max_start_idx:
-            max_viable_start_idx += 1
-
-        # Randomly select unique sequence starting positions
-        sequence_starts = np.random.choice(
-            self.viable_sequence_starts[:max_viable_start_idx],
-            size=self.batch_size,
-            replace=False,
-        )
-
-        # Extract sequences
-        batch_sequences = {
+    def reset_trajectory(self):
+        """Reset the trajectory."""
+        self.imagined_trajectories = {
             "states": [],
             "actions": [],
             "rewards": [],
-            "next_states": [],
-            "dones": [],
         }
 
-        for start_idx in sequence_starts:
-            # Extract sequence of length buffer_seq_length starting from start_idx
-            seq_states = []
-            seq_actions = []
-            seq_rewards = []
-            seq_next_states = []
-            seq_dones = []
-
-            for i in range(self.buffer_seq_length):
-                idx = start_idx + i
-                seq_states.append(self.experience_buffer["states"][idx])
-                seq_actions.append(self.experience_buffer["actions"][idx])
-                seq_rewards.append(self.experience_buffer["rewards"][idx])
-                seq_next_states.append(self.experience_buffer["next_states"][idx])
-                seq_dones.append(self.experience_buffer["dones"][idx])
-
-            batch_sequences["states"].append(np.array(seq_states))
-            batch_sequences["actions"].append(np.array(seq_actions))
-            batch_sequences["rewards"].append(np.array(seq_rewards))
-            batch_sequences["next_states"].append(np.array(seq_next_states))
-            batch_sequences["dones"].append(np.array(seq_dones))
-
-        # Remove the sequences from the viable starting positions
-        for start_idx in sequence_starts:
-            self.viable_sequence_starts.remove(start_idx)
-
-        # Convert to numpy arrays
-        # Shape: (batch_size, sequence_length, feature_dim) -> (sequence_length, batch_size, feature_dim)
-        batch = {
-            "states": np.array(batch_sequences["states"]).transpose(1, 0, 2),
-            "actions": np.array(batch_sequences["actions"]).transpose(1, 0, 2),
-            "rewards": np.array(batch_sequences["rewards"]).transpose(1, 0),
-            "next_states": np.array(batch_sequences["next_states"]).transpose(1, 0, 2),
-            "dones": np.array(batch_sequences["dones"]).transpose(1, 0),
-        }
-
-        return batch
+    def get_trajectory(self):
+        """Get the imagined trajectory."""
+        states = torch.tensor(
+            self.imagined_trajectories["states"], dtype=torch.float32
+        )  # [imag_horizon, batch_size, state_dim]
+        actions = torch.tensor(
+            self.imagined_trajectories["actions"], dtype=torch.float32
+        )  # [imag_horizon, batch_size, action_dim]
+        rewards = torch.tensor(
+            self.imagined_trajectories["rewards"], dtype=torch.float32
+        )  # [imag_horizon, batch_size]
+        return states, actions, rewards
 
     def train_agent(self):
         """Perform a training step on the agent using collected experience."""
-        if not self.can_train():
-            return None
 
         batch = self.sample_batch()
 
@@ -244,16 +202,16 @@ class ActorCriticTrainer:
 
         return losses
 
-    def save_models(self, episode=None):
+    def save_models(self, epoch=None):
         """
         Save the trained actor and critic models along with training configuration.
 
-        :param episode: Optional episode number to include in filename
+        :param epoch: Optional epoch number to include in filename
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if episode is not None:
-            model_name = f"snn_actor_critic_ep{episode}_{timestamp}"
+        if epoch is not None:
+            model_name = f"snn_actor_critic_ep{epoch}_{timestamp}"
         else:
             model_name = f"snn_actor_critic_final_{timestamp}"
 
@@ -266,12 +224,8 @@ class ActorCriticTrainer:
                 "model_state_dict": self.agent.actor.state_dict(),
                 "optimizer_state_dict": self.agent.actor_optimizer.state_dict(),
                 "model_config": {
-                    "state_dim": self.agent.state_dim,
-                    "hidden_dim": self.agent.hidden_dim,
-                    "action_dim": self.agent.action_dim,
-                    "num_steps": self.agent.num_steps,
-                    "weight_init_mean": self.agent.weight_init_mean,
-                    "weight_init_std": self.agent.weight_init_std,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_space,
                 },
             },
             os.path.join(model_path, "actor.pth"),
@@ -280,14 +234,11 @@ class ActorCriticTrainer:
         # Save critic model
         torch.save(
             {
-                "model_state_dict": self.agent.critic.state_dict(),
-                "optimizer_state_dict": self.agent.critic_optimizer.state_dict(),
+                "model_state_dict": self.agent.value.state_dict(),
+                "optimizer_state_dict": self.agent.value_optimizer.state_dict(),
                 "model_config": {
-                    "state_dim": self.agent.state_dim,
-                    "hidden_dim": self.agent.hidden_dim,
-                    "output_dim": 1,
-                    "weight_init_mean": self.agent.weight_init_mean,
-                    "weight_init_std": self.agent.weight_init_std,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_space,
                 },
             },
             os.path.join(model_path, "critic.pth"),
@@ -322,131 +273,64 @@ class ActorCriticTrainer:
         """
         Runs the main training loop with proper learning updates.
         """
-        num_episodes = self.config.get("num_episodes", 100)
-        max_steps_per_episode = self.config.get("max_steps_per_episode", 10000)
-        save_frequency = self.config.get(
-            "save_frequency", None
-        )  # Save every N episodes
+        num_epochs = self.config.get("num_epochs")
+        max_steps_per_episode = self.config.get("max_steps_per_episode")
+        save_frequency = self.config.get("save_frequency")  # Save every N episodes
 
-        print(f"Starting training for {num_episodes} episodes...")
+        print(f"Starting training for {num_epochs} epochs...")
         print(
-            f"Agent configuration: SNN with {self.agent.hidden_dim} hidden units, {self.agent.num_steps} time steps"
+            f"Agent configuration: Actor with {self.agent.actor.units} hidden units, {self.agent.actor.layers} layers, Critic with {self.agent.value.units} hidden units, {self.agent.value.layers} layers"
         )
 
-        for episode in range(num_episodes):
-            state = self.world_model.reset()
-            terminated = False
-            total_reward = 0
-            step_count = 0
+        for epoch in range(num_epochs):
+            self.reset_trajectory()
+            states = []
+            for _ in range(self.batch_size):
+                states.append(self.initial_state_buffer.pop())
 
-            self.agent.actor.reset()
+            states = torch.tensor(
+                states, dtype=torch.float32
+            )  # [batch_size, state_dim]
 
-            # Episode rollout
-            while not terminated and step_count < max_steps_per_episode:
-                # Get action from agent
-
-                action = self.agent.get_action(state)
-
-                # Environment step
-                next_state, reward, terminated, info = self.world_model.step(action)
-
-                # Store experience
-                self.collect_experience(
-                    state,
-                    action,
-                    reward,
-                    next_state,
-                    terminated,
+            for i in range(self.imag_horizon):
+                actions = self.agent.get_action(states)
+                next_states, rewards, _, _ = self.world_model.step(actions)
+                self.store_trajectory(
+                    states,
+                    actions,
+                    rewards,
                 )
+                states = next_states
 
-                # Periodic training updates
-                if step_count % self.update_frequency == 0 and self.can_train():
-                    # We save the agent states before training to avoid forgetting the current membrane potentials and spikes, because during training the agent is reset
-                    # self.agent.save_agent_states()
-                    losses = self.train_agent()
-                    # self.agent.load_agent_states()
-                    self.agent.actor.reset()
-                    if losses and step_count % (self.update_frequency * 5) == 0:
-                        print(
-                            f"  Step {step_count}: Actor Loss: {losses['actor_loss']:.4f}, "
-                            f"Critic Loss: {losses['critic_loss']:.4f}, "
-                            f"Mean Value: {losses['mean_value']:.4f}"
-                        )
+            states, actions, rewards = self.get_trajectory()
 
-                state = next_state
-                total_reward += reward
-                step_count += 1
+            losses = self.train_agent()
+            print(
+                f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
+                f"Critic Loss: {losses['critic_loss']:.4f}"
+            )
 
-            # Episode summary
-            self.episode_rewards.append(total_reward)
-            self.episode_lengths.append(step_count)
-
-            # Log episode metrics to TensorBoard
-            self.writer.add_scalar("Episode/Reward", total_reward, episode)
-            self.writer.add_scalar("Episode/Length", step_count, episode)
-            self.writer.add_scalar("Episode/Global_Step", self.global_step, episode)
-
-            # Calculate and log running averages
-            if len(self.episode_rewards) >= 10:
-                avg_reward_10 = np.mean(self.episode_rewards[-10:])
-                avg_length_10 = np.mean(self.episode_lengths[-10:])
-                self.writer.add_scalar("Episode/Avg_Reward_10", avg_reward_10, episode)
-                self.writer.add_scalar("Episode/Avg_Length_10", avg_length_10, episode)
-
-            if len(self.episode_rewards) >= 100:
-                avg_reward_100 = np.mean(self.episode_rewards[-100:])
-                avg_length_100 = np.mean(self.episode_lengths[-100:])
-                self.writer.add_scalar(
-                    "Episode/Avg_Reward_100", avg_reward_100, episode
-                )
-                self.writer.add_scalar(
-                    "Episode/Avg_Length_100", avg_length_100, episode
-                )
-
-            # Print episode results
-            if episode % 10 == 0 or episode < 10:
-                avg_reward = (
-                    np.mean(self.episode_rewards[-10:])
-                    if len(self.episode_rewards) >= 10
-                    else np.mean(self.episode_rewards)
-                )
-                print(
-                    f"Episode {episode+1:3d}: Reward: {total_reward:8.2f}, Steps: {step_count:4d}, "
-                    f"Avg Reward (last 10): {avg_reward:8.2f}"
-                )
-
-            self.global_step += step_count
+            self.writer.add_scalar("Training/Actor_Loss", losses["actor_loss"], epoch)
+            self.writer.add_scalar("Training/Critic_Loss", losses["critic_loss"], epoch)
 
             # Save models periodically if requested
-            if save_frequency and (episode + 1) % save_frequency == 0:
-                self.save_models(episode=episode + 1)
+            if save_frequency and (epoch + 1) % save_frequency == 0:
+                self.save_models(epoch=epoch + 1)
 
         # Final training statistics
         print("\n=== Training Complete ===")
-        avg_reward = np.mean(self.episode_rewards)
-        avg_length = np.mean(self.episode_lengths)
-        best_reward = np.max(self.episode_rewards)
-
-        print(f"Average Episode Reward: {avg_reward:.2f}")
-        print(f"Average Episode Length: {avg_length:.1f}")
-        print(f"Best Episode Reward: {best_reward:.2f}")
 
         # Log final training statistics to TensorBoard
-        self.writer.add_scalar("Training/Final_Avg_Reward", avg_reward, num_episodes)
-        self.writer.add_scalar("Training/Final_Avg_Length", avg_length, num_episodes)
-        self.writer.add_scalar("Training/Best_Reward", best_reward, num_episodes)
-        self.writer.add_scalar("Training/Total_Steps", self.global_step, num_episodes)
-
         if self.training_losses:
             final_losses = self.training_losses[-1]
             print(f"Final Actor Loss: {final_losses['actor_loss']:.4f}")
             print(f"Final Critic Loss: {final_losses['critic_loss']:.4f}")
 
             self.writer.add_scalar(
-                "Training/Final_Actor_Loss", final_losses["actor_loss"], num_episodes
+                "Training/Final_Actor_Loss", final_losses["actor_loss"], num_epochs
             )
             self.writer.add_scalar(
-                "Training/Final_Critic_Loss", final_losses["critic_loss"], num_episodes
+                "Training/Final_Critic_Loss", final_losses["critic_loss"], num_epochs
             )
 
         # Close TensorBoard writer
@@ -475,8 +359,7 @@ class ActorCriticTrainer:
 
         # Set agent to evaluation mode
         self.agent.actor.eval()
-        self.agent.critic.eval()
-        self.agent.actor.reset()
+        self.agent.value.eval()
 
         eval_rewards = []
         eval_lengths = []
@@ -504,7 +387,7 @@ class ActorCriticTrainer:
 
         # Set agent back to training mode
         self.agent.actor.train()
-        self.agent.critic.train()
+        self.agent.value.train()
 
         # Calculate evaluation statistics
         eval_avg_reward = np.mean(eval_rewards)
@@ -532,34 +415,9 @@ class ActorCriticTrainer:
 
 if __name__ == "__main__":
     # Example configuration
-    training_config = {
-        "num_episodes": 100,
-        "batch_size": 512,
-        "buffer_seq_length": 15,  # Trajectory length for λ-returns
-        "update_frequency": 3,
-        "learning_rate": 1e-5,
-        "gamma": 0.997,  # Discount factor for the reward
-        "discount_lambda": 0.95,  # return mixing factor
-        "hidden_dim": 32,
-        "snn_time_steps": 1,
-        "max_steps_per_episode": 1000,
-        "alpha": 0.9,
-        "beta": 0.9,
-        "threshold": 0.01,
-        "learn_alpha": True,
-        "learn_beta": True,
-        "learn_threshold": True,
-        "visualize": False,
-        "dt_simulation": 0.02,
-        "weight_init_mean": 0.03,
-        "weight_init_std": 0.03,
-        "max_std": 1.0,
-        "min_std": 0.01,
-        "save_dir": "saved_models",  # Directory to save trained models
-        "log_dir": "runs",  # Directory for TensorBoard logs
-        "save_frequency": 10,  # Save models every N episodes (None to disable)
-    }
-
+    training_config = yaml.load(
+        open("configs/actor_critic_config.yaml"), Loader=yaml.FullLoader
+    )
     trainer = ActorCriticTrainer(config=training_config)
     trainer.train()
     trainer.evaluate(num_episodes=5)

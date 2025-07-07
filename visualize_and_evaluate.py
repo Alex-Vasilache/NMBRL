@@ -13,7 +13,7 @@ from collections import deque
 sys.path.insert(0, os.path.dirname(__file__))
 
 from world_models.ini_cartpole_wrapper import INICartPoleWrapper
-from agents.snn_actor_critic_agent import SnnActorCriticAgent
+from agents.snn_actor_critic_agent import ActorCriticAgent
 
 
 class ModelEvaluator:
@@ -56,7 +56,7 @@ class ModelEvaluator:
 
         # Initialize agent
         action_space = self.world_model.env.action_space
-        self.agent = SnnActorCriticAgent(
+        self.agent = ActorCriticAgent(
             action_space=action_space,
             state_dim=self.config.get("state_dim", 6),
             hidden_dim=self.config.get("hidden_dim", 128),
