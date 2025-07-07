@@ -14,7 +14,7 @@ class INICartPoleWrapper(BaseWorldModel):
     """
     A wrapper for the existing INI CartPole environment to make it compatible with the BaseWorldModel interface.
     This allows the RL agent to interact with the "real" environment in the same way it would
-    interact with a learned world model.
+    interact with a learned world model. Supports batching for parallel environment execution.
     """
 
     def __init__(
@@ -32,9 +32,13 @@ class INICartPoleWrapper(BaseWorldModel):
         :param max_steps: Maximum number of steps before manual termination (default: 1000)
         :param target_position: Target position for the cart (default: 0.0)
         :param target_equilibrium: Target equilibrium scaling factor (default: 1.0)
+        :param dt_simulation: Simulation timestep (default: 0.02)
         :param visualize: If True, a window with the CartPole visualization will be opened (default: False)
         :param kwargs: Arguments to be passed to the underlying CartPole environment.
         """
+        self.batch_size = 0  # Will be set by reset()
+        self.dt_simulation = dt_simulation
+
         # This is a hacky way to ensure the imports from the submodule work,
         # and that the submodule can find its own config files.
         submodule_root = os.path.abspath(
@@ -76,10 +80,9 @@ class INICartPoleWrapper(BaseWorldModel):
         os.chdir(submodule_root)
 
         try:
-            # Initialize the "real" CartPole environment
-            self.env = RealCartPole()
-            self.target_slider = TargetSlider()
-            self.env.target_slider = self.target_slider
+            # Store classes for later environment creation
+            self.RealCartPole = RealCartPole
+            self.TargetSlider = TargetSlider
 
             # Import and initialize the cost function
             from Control_Toolkit_ASF.Cost_Functions.CartPole.quadratic_boundary import (
@@ -102,7 +105,6 @@ class INICartPoleWrapper(BaseWorldModel):
 
         # Manual termination parameters
         self.max_steps = max_steps
-        self.step_count = 0
 
         # Store target parameters for access
         self.target_position = target_position
@@ -111,25 +113,25 @@ class INICartPoleWrapper(BaseWorldModel):
         # This is an assumed limit for angular velocity, used for normalization
         self.max_angular_velocity = 15.0  # rad/s
 
-        # Previous control input for jerk penalty
-        self.previous_action = 0.0
-
-        # Set a default simulation timestep if not provided
-        self.env.dt_simulation = dt_simulation
-
         self.visualize = visualize
-        if self.visualize:
-            self._init_visualization()
 
-        self.reset()
+        # Initialize empty containers that will be filled by reset()
+        self.envs = []
+        self.target_sliders = []
+        self.step_counts = np.array([])
+        self.previous_actions = np.array([])
+
+        # Initialize with default batch size of 1
+        self.reset(batch_size=1)
 
     def _init_visualization(self):
-        """Initializes the visualization elements."""
+        """Initializes the visualization elements for the first environment only."""
         import matplotlib.pyplot as plt
         from CartPole.cartpole_drawer import CartPoleDrawer
 
+        # Only visualize the first environment to avoid multiple windows
         self.fig, self.axes = plt.subplots(2, 1, figsize=(16, 10))
-        self.drawer = CartPoleDrawer(self.env, self.target_slider)
+        self.drawer = CartPoleDrawer(self.envs[0], self.target_sliders[0])
         self.drawer.draw_constant_elements(self.fig, self.axes[0], self.axes[1])
 
         # Manually add the patches for the cart, which is normally done in the animation init
@@ -147,7 +149,7 @@ class INICartPoleWrapper(BaseWorldModel):
         self.fig.show()
 
     def _render(self):
-        """Renders the current state of the environment."""
+        """Renders the current state of the first environment only."""
         if self.visualize:
             self.drawer.update_drawing()
             self.drawer.Mast.set_transform(self.drawer.t2 + self.axes[0].transData)
@@ -157,31 +159,40 @@ class INICartPoleWrapper(BaseWorldModel):
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
 
-    def _compute_reward_from_cost(self, state, action):
+    def _compute_reward_from_cost(self, states, actions):
         """
         Convert the quadratic boundary cost to a reward using the original cost function.
         Lower cost = higher reward.
-        """
-        # Reshape state and action for the cost function (expects batch dimensions)
-        state_batch = np.expand_dims(state, axis=0)  # Shape: (1, state_dim)
-        state_batch = np.expand_dims(state_batch, axis=0)  # Shape: (1, 1, state_dim)
 
-        action_batch = np.array([[[action]]])  # Shape: (1, 1, 1)
+        :param states: Batch of states with shape (batch_size, state_dim)
+        :param actions: Batch of actions with shape (batch_size,)
+        :return: Tuple of (rewards, cost_info_dict)
+        """
+        # Reshape for cost function (expects shape: (1, batch_size, state_dim))
+        state_batch = np.expand_dims(
+            states, axis=0
+        )  # Shape: (1, batch_size, state_dim)
+
+        # Reshape actions (expects shape: (1, batch_size, 1))
+        action_batch = np.expand_dims(actions, axis=-1)  # Shape: (batch_size, 1)
+        action_batch = np.expand_dims(action_batch, axis=0)  # Shape: (1, batch_size, 1)
 
         # Compute the stage cost using the original cost function
-        stage_cost = self.cost_function._get_stage_cost(
-            state_batch, action_batch, self.previous_action
+        stage_costs = self.cost_function._get_stage_cost(
+            state_batch,
+            action_batch,
+            self.previous_actions[0],  # Use first env's previous action for now
         )
 
-        # Extract scalar cost value
-        total_cost = float(stage_cost[0, 0]) / self.max_cost
+        # Extract costs and normalize
+        total_costs = stage_costs[0, :] / self.max_cost  # Shape: (batch_size,)
+        total_costs = 1 / (1 + np.exp(-total_costs))
 
-        total_cost = 1 / (1 + np.exp(-total_cost))
+        # Convert cost to reward (negative cost)
+        rewards = -total_costs
 
-        # Convert cost to reward (negative cost); normalize the cost to be between 0 and 1
-        reward = -total_cost
-
-        # For debugging, compute individual components with correct weights
+        # Compute individual cost components for debugging
+        cost_info = {}
         try:
             # Import the weight constants from the module
             from Control_Toolkit_ASF.Cost_Functions.CartPole.quadratic_boundary import (
@@ -192,135 +203,302 @@ class INICartPoleWrapper(BaseWorldModel):
                 R,
             )
 
-            # Get raw cost components (unweighted)
-            raw_dd_cost = float(
-                self.cost_function._distance_difference_cost(state[self.POSITION_IDX])
+            # Get raw cost components for all environments
+            positions = states[:, self.POSITION_IDX]
+            angles = states[:, self.ANGLE_IDX]
+
+            # Distance difference costs
+            raw_dd_costs = np.array(
+                [
+                    float(self.cost_function._distance_difference_cost(pos))
+                    for pos in positions
+                ]
             )
-            raw_ep_cost = float(self.cost_function._E_pot_cost(state[self.ANGLE_IDX]))
-            raw_cc_cost = float(self.cost_function._CC_cost(action_batch)[0, 0])
 
-            # Control change rate cost (if we have previous action)
-            raw_ccrc_cost = 0.0
-            if self.previous_action is not None:
-                raw_ccrc_cost = float(
-                    self.cost_function._control_change_rate_cost(
-                        action_batch, self.previous_action
-                    )[0, 0]
-                )
+            # Potential energy costs
+            raw_ep_costs = np.array(
+                [float(self.cost_function._E_pot_cost(angle)) for angle in angles]
+            )
 
-            # Apply the weights from the config file to get weighted costs
-            weighted_dd_cost = dd_weight * raw_dd_cost
-            weighted_ep_cost = ep_weight * raw_ep_cost
-            weighted_cc_cost = cc_weight * raw_cc_cost
-            weighted_ccrc_cost = ccrc_weight * raw_ccrc_cost
+            # Control costs
+            raw_cc_costs = self.cost_function._CC_cost(action_batch)[0, :]
+
+            # Control change rate costs
+            raw_ccrc_costs = np.zeros(self.batch_size)
+            for i in range(self.batch_size):
+                if self.previous_actions[i] is not None:
+                    action_single = np.array([[[actions[i]]]])
+                    raw_ccrc_costs[i] = float(
+                        self.cost_function._control_change_rate_cost(
+                            action_single, self.previous_actions[i]
+                        )[0, 0]
+                    )
+
+            # Apply weights
+            cost_info = {
+                "distance_cost": dd_weight * raw_dd_costs,
+                "angle_cost": ep_weight * raw_ep_costs,
+                "control_cost": cc_weight * raw_cc_costs,
+                "jerk_cost": ccrc_weight * raw_ccrc_costs,
+                "total_cost": total_costs,
+            }
 
         except Exception as e:
             # Fallback if individual cost computation fails
-            weighted_dd_cost = weighted_ep_cost = weighted_cc_cost = (
-                weighted_ccrc_cost
-            ) = 0.0
+            cost_info = {
+                "distance_cost": np.zeros(self.batch_size),
+                "angle_cost": np.zeros(self.batch_size),
+                "control_cost": np.zeros(self.batch_size),
+                "jerk_cost": np.zeros(self.batch_size),
+                "total_cost": total_costs,
+            }
 
-        return reward, {
-            "distance_cost": weighted_dd_cost,
-            "angle_cost": weighted_ep_cost,
-            "control_cost": weighted_cc_cost,
-            "jerk_cost": weighted_ccrc_cost,
-            "total_cost": total_cost,
-        }
+        return rewards, cost_info
 
-    def _normalize_state(self, state):
+    def _normalize_state(self, states):
         """
         Normalizes the state variables to be within the [0, 1] range.
+
+        :param states: States to normalize, can be single state or batch of states
+        :return: Normalized states with same shape as input
         """
-        normalized_state = np.zeros_like(state)
+        # Handle both single states and batches
+        if states.ndim == 1:
+            states = states.reshape(1, -1)
+            squeeze_output = True
+        else:
+            squeeze_output = False
+
+        normalized_states = np.zeros_like(states)
 
         # Normalize position: [-TrackHalfLength, TrackHalfLength] -> [0, 1]
         pos_clamped = np.clip(
-            state[self.POSITION_IDX], -self.TrackHalfLength, self.TrackHalfLength
+            states[:, self.POSITION_IDX], -self.TrackHalfLength, self.TrackHalfLength
         )
-        normalized_state[self.POSITION_IDX] = (pos_clamped + self.TrackHalfLength) / (
-            2 * self.TrackHalfLength
-        )
+        normalized_states[:, self.POSITION_IDX] = (
+            pos_clamped + self.TrackHalfLength
+        ) / (2 * self.TrackHalfLength)
 
         # Normalize positionD: [-v_max, v_max] -> [0, 1]
-        posD_clamped = np.clip(state[self.POSITIOND_IDX], -self.v_max, self.v_max)
-        normalized_state[self.POSITIOND_IDX] = (posD_clamped + self.v_max) / (
+        posD_clamped = np.clip(states[:, self.POSITIOND_IDX], -self.v_max, self.v_max)
+        normalized_states[:, self.POSITIOND_IDX] = (posD_clamped + self.v_max) / (
             2 * self.v_max
         )
 
         # Normalize angle: [-pi, pi] -> [0, 1]
-        normalized_state[self.ANGLE_IDX] = (state[self.ANGLE_IDX] + np.pi) / (2 * np.pi)
+        normalized_states[:, self.ANGLE_IDX] = (states[:, self.ANGLE_IDX] + np.pi) / (
+            2 * np.pi
+        )
 
         # Normalize angleD: [-max_angular_velocity, max_angular_velocity] -> [0, 1]
         angleD_clamped = np.clip(
-            state[self.ANGLED_IDX],
+            states[:, self.ANGLED_IDX],
             -self.max_angular_velocity,
             self.max_angular_velocity,
         )
-        normalized_state[self.ANGLED_IDX] = (
+        normalized_states[:, self.ANGLED_IDX] = (
             angleD_clamped + self.max_angular_velocity
         ) / (2 * self.max_angular_velocity)
 
         # Normalize angle_cos and angle_sin: [-1, 1] -> [0, 1]
-        normalized_state[self.ANGLE_COS_IDX] = (state[self.ANGLE_COS_IDX] + 1) / 2
-        normalized_state[self.ANGLE_SIN_IDX] = (state[self.ANGLE_SIN_IDX] + 1) / 2
+        normalized_states[:, self.ANGLE_COS_IDX] = (
+            states[:, self.ANGLE_COS_IDX] + 1
+        ) / 2
+        normalized_states[:, self.ANGLE_SIN_IDX] = (
+            states[:, self.ANGLE_SIN_IDX] + 1
+        ) / 2
 
-        return normalized_state
+        if squeeze_output:
+            return normalized_states.squeeze(0)
+        return normalized_states
 
-    def step(self, action: np.ndarray):
+    def _create_environments(self, batch_size):
+        """Create or resize environments to match the target batch size."""
+        current_size = len(self.envs)
+
+        if batch_size > current_size:
+            # Create additional environments
+            for i in range(current_size, batch_size):
+                env = self.RealCartPole()
+                target_slider = self.TargetSlider()
+                env.target_slider = target_slider
+                env.dt_simulation = self.dt_simulation
+
+                self.envs.append(env)
+                self.target_sliders.append(target_slider)
+
+        elif batch_size < current_size:
+            # Remove excess environments
+            self.envs = self.envs[:batch_size]
+            self.target_sliders = self.target_sliders[:batch_size]
+
+        # Update batch size and related arrays
+        self.batch_size = batch_size
+        self.step_counts = np.zeros(self.batch_size, dtype=int)
+        self.previous_actions = np.zeros(self.batch_size)
+
+    def step(self, actions: np.ndarray):
         """
-        Takes a single step in the environment.
+        Takes a single step in all environments.
 
-        :param action: A numpy array representing the action to take, corresponding to the dimensionless motor power Q.
-        :return: A tuple containing (next_state, reward, terminated, info).
+        :param actions: A numpy array of actions with shape (batch_size,) or (batch_size, 1),
+                       representing the dimensionless motor power Q for each environment.
+        :return: A tuple containing (next_states, rewards, terminated, info).
+                 next_states: shape (batch_size, state_dim)
+                 rewards: shape (batch_size,)
+                 terminated: shape (batch_size,) - boolean array
+                 info: dict with arrays of shape (batch_size,)
         """
-        # Set the action (motor power)
-        action_value = float(action[0])
-        self.env.Q = action_value
+        # Ensure actions have the right shape
+        actions = np.asarray(actions)
+        if actions.ndim == 2 and actions.shape[1] == 1:
+            actions = actions.squeeze(1)
+        elif actions.ndim == 1:
+            pass  # Already correct shape
+        else:
+            raise ValueError(
+                f"Actions must have shape (batch_size,) or (batch_size, 1), got {actions.shape}"
+            )
 
-        # Update the environment state
-        self.env.update_state()
+        if len(actions) != self.batch_size:
+            raise ValueError(f"Expected {self.batch_size} actions, got {len(actions)}")
 
-        # Get the new state
-        state = self.env.s_with_noise_and_latency
+        # Step each environment
+        states = []
+        for i, (env, action_value) in enumerate(zip(self.envs, actions)):
+            # Set the action (motor power)
+            env.Q = float(action_value)
 
-        # Render the environment if visualization is enabled
+            # Update the environment state
+            env.update_state()
+
+            # Get the new state
+            states.append(env.s_with_noise_and_latency)
+
+        states = np.array(states)  # Shape: (batch_size, state_dim)
+
+        # Render the first environment if visualization is enabled
         if self.visualize:
             self._render()
 
-        # Compute reward using the original quadratic boundary cost function
-        reward, cost_info = self._compute_reward_from_cost(state, action_value)
+        # Compute rewards using the original quadratic boundary cost function
+        rewards, cost_info = self._compute_reward_from_cost(states, actions)
 
         # Manual termination after max_steps (no out-of-bounds termination)
-        self.step_count += 1
-        terminated = self.step_count >= self.max_steps
+        self.step_counts += 1
+        terminated = self.step_counts >= self.max_steps
 
-        # Update previous action for next step's jerk calculation
-        self.previous_action = action_value
+        # Update previous actions for next step's jerk calculation
+        self.previous_actions = actions.copy()
 
-        # Info dictionary with cost breakdown
-        info = {"step_count": self.step_count, "max_steps": self.max_steps, **cost_info}
+        # Info dictionary with cost breakdown and step information
+        info = {
+            "step_count": self.step_counts.copy(),
+            "max_steps": np.full(self.batch_size, self.max_steps),
+            **cost_info,
+        }
 
-        return self._normalize_state(state), reward, terminated, info
+        return self._normalize_state(states), rewards, terminated, info
 
-    def reset(self):
+    def reset(self, batch_size=None, initial_state=None):
         """
-        Resets the environment to a new initial state.
+        Resets environments to new initial states. Optionally changes the batch size
+        and/or sets specific initial states.
 
-        :return: The initial state of the environment.
+        :param batch_size: Number of environments to use. If None, keeps current batch size.
+        :param initial_state: Initial states for environments with shape (batch_size, state_dim).
+                             If None, uses random initialization.
+        :return: The initial states of all environments with shape (batch_size, state_dim).
         """
-        # `reset_mode=1` initializes the cart at a random state.
-        self.env.set_cartpole_state_at_t0(reset_mode=1)
+        # Handle initial_state parameter
+        if initial_state is not None:
+            initial_state = np.asarray(initial_state)
 
-        # Reset step counter and previous action
-        self.step_count = 0
-        self.previous_action = 0.0
+            # Validate initial_state shape
+            if initial_state.ndim == 1:
+                # Single state provided, reshape to (1, state_dim)
+                initial_state = initial_state.reshape(1, -1)
+            elif initial_state.ndim != 2:
+                raise ValueError(
+                    f"initial_state must have shape (batch_size, state_dim), got shape {initial_state.shape}"
+                )
 
-        # Render the reset state
+            # Infer batch_size from initial_state if not provided
+            if batch_size is None:
+                batch_size = initial_state.shape[0]
+            elif batch_size != initial_state.shape[0]:
+                raise ValueError(
+                    f"batch_size ({batch_size}) must match initial_state.shape[0] ({initial_state.shape[0]})"
+                )
+
+        # Create/resize environments if batch_size is specified
+        if batch_size is not None:
+            self._create_environments(batch_size)
+
+        states = []
+        for i, env in enumerate(self.envs):
+            if initial_state is not None:
+                # Set specific initial state
+                # Convert normalized state back to raw state for the environment
+                raw_state = self._denormalize_state(initial_state[i])
+                env.set_cartpole_state_at_t0(
+                    reset_mode=2, s=raw_state, target_position=self.target_position
+                )
+                states.append(env.s)
+            else:
+                # Random initialization
+                env.set_cartpole_state_at_t0(reset_mode=1)
+                states.append(env.s)
+
+        # Reset step counters and previous actions
+        self.step_counts = np.zeros(self.batch_size, dtype=int)
+        self.previous_actions = np.zeros(self.batch_size)
+
+        # Initialize visualization for the first environment if needed
+        if self.visualize and not hasattr(self, "fig"):
+            self._init_visualization()
+
+        # Render the reset state of the first environment
         if self.visualize:
             self._render()
 
-        return self._normalize_state(self.env.s)
+        states = np.array(states)  # Shape: (batch_size, state_dim)
+        return self._normalize_state(states)
+
+    def _denormalize_state(self, normalized_state):
+        """
+        Converts normalized state back to raw state values for the environment.
+
+        :param normalized_state: Normalized state with values in [0, 1] range
+        :return: Raw state values in original ranges
+        """
+        raw_state = np.zeros_like(normalized_state)
+
+        # Denormalize position: [0, 1] -> [-TrackHalfLength, TrackHalfLength]
+        raw_state[self.POSITION_IDX] = (
+            normalized_state[self.POSITION_IDX] * 2 * self.TrackHalfLength
+        ) - self.TrackHalfLength
+
+        # Denormalize positionD: [0, 1] -> [-v_max, v_max]
+        raw_state[self.POSITIOND_IDX] = (
+            normalized_state[self.POSITIOND_IDX] * 2 * self.v_max
+        ) - self.v_max
+
+        # Denormalize angle: [0, 1] -> [-pi, pi]
+        raw_state[self.ANGLE_IDX] = (
+            normalized_state[self.ANGLE_IDX] * 2 * np.pi
+        ) - np.pi
+
+        # Denormalize angleD: [0, 1] -> [-max_angular_velocity, max_angular_velocity]
+        raw_state[self.ANGLED_IDX] = (
+            normalized_state[self.ANGLED_IDX] * 2 * self.max_angular_velocity
+        ) - self.max_angular_velocity
+
+        # Denormalize angle_cos and angle_sin: [0, 1] -> [-1, 1]
+        raw_state[self.ANGLE_COS_IDX] = (normalized_state[self.ANGLE_COS_IDX] * 2) - 1
+        raw_state[self.ANGLE_SIN_IDX] = (normalized_state[self.ANGLE_SIN_IDX] * 2) - 1
+
+        return raw_state
 
     def close(self):
         """Closes the visualization window."""

@@ -32,19 +32,19 @@ class ActorCriticTrainer:
         """
         self.config = config
         self.world_model = INICartPoleWrapper(
+            batch_size=config.get("batch_size"),
             max_steps=config.get("max_steps_per_episode"),
             visualize=config.get("visualize"),
             dt_simulation=config.get("dt_simulation"),
         )
 
         # Initialize the Actor-Critic agent
-        self.action_space = self.world_model.env.action_space
-        self.state_dim = self.world_model.env.observation_space.shape[0]
+        self.action_space = self.world_model.envs[0].action_space
+        self.state_dim = self.world_model.envs[0].observation_space.shape[0]
         self.agent = ActorCriticAgent(
             config=config,
             state_dim=self.state_dim,
             action_dim=self.action_space,
-            lr=config.get("learning_rate"),
         )
 
         # Training parameters
@@ -117,21 +117,21 @@ class ActorCriticTrainer:
         sequential_states = []
 
         step_count = 0
-        state = self.world_model.reset()
-        sequential_states.append(state)
+        state = self.world_model.reset(batch_size=1)
+        sequential_states.append(state[0])
 
         while len(sequential_states) < self.config.get("batch_size"):
             if step_count < self.config.get("max_steps_per_episode"):
                 action = np.random.uniform(
                     self.action_space.low, self.action_space.high
                 )
-                state, _, _, _ = self.world_model.step(action)
-                sequential_states.append(state)
+                state, _, _, _ = self.world_model.step(np.array([action]))
+                sequential_states.append(state[0])
                 step_count += 1
             else:
                 step_count = 0
-                state = self.world_model.reset()
-                sequential_states.append(state)
+                state = self.world_model.reset(batch_size=1)
+                sequential_states.append(state[0])
 
         # Shuffle the sequential states
         np.random.shuffle(sequential_states)
@@ -284,6 +284,7 @@ class ActorCriticTrainer:
 
         for epoch in range(num_epochs):
             self.reset_trajectory()
+
             states = []
             for _ in range(self.batch_size):
                 states.append(self.initial_state_buffer.pop())
@@ -291,6 +292,10 @@ class ActorCriticTrainer:
             states = torch.tensor(
                 states, dtype=torch.float32
             )  # [batch_size, state_dim]
+
+            states = self.world_model.reset(
+                batch_size=self.batch_size, initial_state=states
+            )
 
             for i in range(self.imag_horizon):
                 actions = self.agent.get_action(states)
