@@ -70,8 +70,8 @@ The components in the architecture diagram above map to the following files and 
 |     E      | SNN World Model       | `world_models/snn_world_model.py`      | T3.1                |
 |     F      | Environment Wrapper   | `world_models/ini_cartpole_wrapper.py` | T1.3                |
 |     G      | AC Trainer            | `learning/actor_critic_trainer.py`     | T2.2, T2.4          |
-|     H      | Actor-Critic Agent    | `agents/snn_actor_critic_agent.py`     | T2.1                |
-|    I, J    | SNN Actor/Critic      | `agents/snn_actor_critic_agent.py`     | T2.1                |
+|     H      | Actor-Critic Agent    | `agents/actor_critic_agent.py`         | T2.1                |
+|    I, J    | SNN Actor/Critic      | `agents/actor_critic_agent.py`         | T2.1                |
 
 ## 3. Project Structure
 
@@ -81,14 +81,18 @@ To maintain modularity the project will have following structure:
 Neuromorphic_MBRL/
 ├── agents/
 │   ├── __init__.py
-│   ├── snn_actor_critic_agent.py # Defines the SNN-based actor-critic agent
+│   ├── actor_critic_agent.py   # Defines the SNN-based actor-critic agent
 │   └── base_agent.py           # Abstract base class for agents
+├── configs/
+│   └── actor_critic_config.yaml  # Configuration files for experiments
 ├── environments/
 │   └── CartPoleSimulation/     # The CartPole simulation environment (submodule)
 ├── learning/
 │   ├── __init__.py
 │   ├── actor_critic_trainer.py # Training loop for the AC module
 │   └── world_model_trainer.py  # Training loop for the WM module
+├── networks/
+│   └── mlp.py                  # MLP network definitions
 ├── testing/
 │   ├── test_ini_cartpole_wrapper.py # Tester for ini_cartpole_wrapper
 │   └── test_snn_actor_critic.py     # Tester for the actor critic networks
@@ -100,7 +104,8 @@ Neuromorphic_MBRL/
 ├── utils/
 │   └── __init__.py
 ├── README.md                   # This readme file
-└── run_mbrl.py                 # Main script to configure and run an experiment
+├── run_mbrl.py                 # Main script to configure and run an experiment
+└── visualize_and_evaluate.py   # Script for loading and evaluating trained models
 ```
 
 ## 4. Development Roadmap & Task Breakdown
@@ -134,7 +139,7 @@ graph TD;
     end
 
     subgraph "Phase 2: Actor-Critic Module (Parallel)"
-        T2_1["T2.1<br/>Initial SNN Actor-Critic Agent"];
+        T2_1["T2.1<br/>Initial Actor-Critic Agent"];
         T2_2["T2.2<br/>Actor-Critic Trainer"];
         T2_3["(T2.3)<br/>Implement Sparse RTRL"];
         T2_1 --> T2_2;
@@ -193,7 +198,7 @@ This project combines MBRL and Actor-Critic in a powerful loop, inspired by algo
 
 2.  **World Model Training (Learning the Dynamics):** The `WorldModelTrainer` uses this collected data to train the `SNNWorldModel`. This is a supervised learning problem where the model learns to predict `(s', r)` given `(s, a)`.
 
-3.  **Behavior Learning (Training in "Imagination"):** This is the core of the sample efficiency gain. The `ActorCriticTrainer` trains the `SnnActorCriticAgent` *entirely within the learned `SNNWorldModel`*.
+3.  **Behavior Learning (Training in "Imagination"):** This is the core of the sample efficiency gain. The `ActorCriticTrainer` trains the `ActorCriticAgent` *entirely within the learned `SNNWorldModel`*.
     - The trainer simulates long trajectories of experience using the world model without ever touching the real environment.
     - For each step in the imagination, the **Actor** proposes an action. The **World Model** predicts the next state and reward. The **Critic** evaluates the imagined state.
     - This large volume of imagined data is used to update the Actor and Critic networks. Because this all happens in simulation, it is fast and generates no wear-and-tear on real hardware.
