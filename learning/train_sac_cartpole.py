@@ -1,56 +1,23 @@
 #!/usr/bin/env python3
-"""
-train_sac_cartpole.py
-
-Training script for SAC on custom CartPoleEnv with timestamped model saving.
-"""
-
 import os
 import random
-import sys
 from datetime import datetime
 
-# Add the parent directory to the path to allow for relative imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
 
 import numpy as np
 import torch
 
-from gymnasium.wrappers import TimeLimit
-
 from typing import Callable
 from stable_baselines3 import SAC
 from stable_baselines3.common.utils import set_random_seed
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
-from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import (
     EvalCallback,
     CheckpointCallback,
     CallbackList,
 )
 
-# This is a hacky way to ensure the imports from the submodule work
-submodule_root = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "environments", "CartPoleSimulation")
-)
-gymlike_root = os.path.join(submodule_root, "GymlikeCartPole")
-
-if submodule_root not in sys.path:
-    sys.path.insert(0, submodule_root)
-if gymlike_root not in sys.path:
-    sys.path.insert(0, gymlike_root)
-
-from EnvGym.CartpoleEnv import CartPoleEnv
-from success_count_callback import RollingSuccessCountCallback
-
-
 # ─── 0) CONFIGURATION ─────────────────────────────────────────────────────────
-
-#  - "stabilization" → balance only from near-upright starts
-#  - "swing_up"      → random starts + swing-up reward shaping
-TASK = "swingup"
-
-CARTPOLE_TYPE = "custom_sim"  # "openai", "custom_sim", "physical"
 
 SEED = 42
 N_ENVS = 16
@@ -59,16 +26,6 @@ TOTAL_TIMESTEPS = 200_000
 NET_ARCH = [32, 32]
 BATCH_SIZE = 256
 INITIAL_LR = 3e-4
-
-
-def make_env():
-    """
-    Instantiate the CartPoleEnv, then wrap with Monitor.
-    Monitor records episode reward/length for logging callbacks.
-    """
-    env = CartPoleEnv(render_mode=None, task=TASK, cartpole_type=CARTPOLE_TYPE)
-    env = TimeLimit(env, max_episode_steps=env.max_episode_steps)
-    return Monitor(env)
 
 
 def main():
@@ -98,14 +55,7 @@ def main():
     set_random_seed(SEED)
 
     # ─── 2) ENV FACTORY ───────────────────────────────────────────────────────────
-    train_env = SubprocVecEnv([make_env for _ in range(N_ENVS)])
-    train_env = VecNormalize(
-        train_env,
-        norm_obs=True,
-        norm_reward=False,
-        clip_obs=10.0,
-    )
-    train_env.seed(SEED)
+    train_env = GymlikeCartpoleWrapper(seed=SEED, n_envs=N_ENVS)
 
     # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
     def linear_schedule(initial_value: float) -> Callable[[float], float]:
@@ -139,15 +89,7 @@ def main():
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
-    eval_env = DummyVecEnv([make_env])
-    eval_env = VecNormalize(
-        eval_env,
-        norm_obs=True,
-        norm_reward=False,
-        clip_obs=10.0,
-    )
-    eval_env.training = False
-    eval_env.seed(SEED)
+    eval_env = GymlikeCartpoleWrapper(seed=SEED, n_envs=1)
 
     eval_callback = EvalCallback(
         eval_env,
@@ -179,6 +121,72 @@ def main():
     # ─── 7) CLEANUP ─────────────────────────────────────────────────────────────
     train_env.close()
     eval_env.close()
+
+
+from collections import deque
+from stable_baselines3.common.callbacks import BaseCallback
+
+
+class RollingSuccessCountCallback(BaseCallback):
+    """
+    After each episode, logs:
+      - roll/episode                         : total number of episodes so far
+      - roll/last_N_successes_by_episode     : successes in last N episodes (indexed by episode count)
+      - roll/last_N_successes_by_timestep    : same successes (indexed by total timesteps)
+      - roll/total_timesteps                 : cumulative number of environment steps so far
+    """
+
+    def __init__(self, n_episodes: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.n_episodes = n_episodes
+        # deque automatically drops oldest entries once full
+        self._window = deque(maxlen=n_episodes)
+        # count of completed episodes
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        """
+        Called at every environment step. We only act when an env reports done=True.
+        """
+        # ─── detect which sub-envs just ended ────────────────────────────────────
+        # `dones` is a list/array of bools for each parallel env
+        dones = self.locals.get("dones", [])
+        infos = self.locals.get("infos", [])
+
+        for idx, done in enumerate(dones):
+            if not done:
+                continue  # nothing to do until this env finishes an episode
+
+            self.episode_count += 1
+
+            info = infos[idx]
+            # ⮕ Gymnasium will set this when the episode ends due to hitting the time limit
+            truncated = info.get("TimeLimit.truncated", False)
+            # ⮕ we treat a truncation by timeout as a “success”
+            success = int(truncated)
+
+            self._window.append(success)
+
+            # ─── rolling sum over last N episodes ───────────────────────────────
+            count = sum(self._window)
+            print(f"[Callback] Last {self.n_episodes} successes: {count}")
+
+            # ─── log under the episode-indexed tag ───────────────────────────────
+            self.logger.record("roll/last_N_successes_by_episode", count)
+            # use episode_count as the step for this series
+            self.logger.dump(self.episode_count)
+
+            # ─── log under the timestep-indexed tag ──────────────────────────────
+            self.logger.record("roll/last_N_successes_by_timestep", count)
+            self.logger.record("roll/total_timesteps", self.num_timesteps)
+            # use num_timesteps as the step for this series
+            self.logger.dump(self.num_timesteps)
+
+            # (Optional) also log the raw episode index
+            self.logger.record("roll/episode", self.episode_count)
+            # it will show up on the next dump
+
+        return True
 
 
 if __name__ == "__main__":
