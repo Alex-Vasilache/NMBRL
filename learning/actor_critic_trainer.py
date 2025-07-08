@@ -11,11 +11,12 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 
+from world_models.dmc_cartpole_wrapper import DMCCartPoleWrapper
+
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils import tools
-from world_models.ini_cartpole_wrapper import INICartPoleWrapper
 from agents.actor_critic_agent import ActorCriticAgent
 
 
@@ -32,7 +33,7 @@ class ActorCriticTrainer:
         :param config: A dictionary containing training parameters.
         """
         self.config = config
-        self.world_model = INICartPoleWrapper(
+        self.world_model = DMCCartPoleWrapper(
             batch_size=config.get("batch_size"),
             max_steps=config.get("max_steps_per_episode"),
             visualize=config.get("visualize"),
@@ -62,9 +63,7 @@ class ActorCriticTrainer:
             "rewards": [],
         }
 
-        self.initial_state_buffer = deque(
-            maxlen=config.get("num_epochs") * config.get("batch_size")
-        )
+        self.initial_state_buffer = []
 
         # Training statistics
         self.episode_rewards = []
@@ -120,45 +119,45 @@ class ActorCriticTrainer:
         step_count = 0
         state = self.world_model.reset(batch_size=1)
 
-        sequential_states.append(state[0])
+        # sequential_states.append(state[0])
 
-        while len(sequential_states) < (
-            self.config.get("batch_size") * self.config.get("num_epochs")
-        ):
-            if step_count < self.config.get("max_steps_per_episode"):
-                action = np.random.uniform(
-                    self.action_space.low, self.action_space.high
-                )
-                state, _, _, _ = self.world_model.step(np.array([action]))
-                sequential_states.append(state[0])
-                step_count += 1
-            else:
-                step_count = 0
-                state = self.world_model.reset(batch_size=1)
-                sequential_states.append(state[0])
+        # while len(sequential_states) < (
+        #     self.config.get("batch_size") * self.config.get("num_epochs")
+        # ):
+        #     if step_count < self.config.get("max_steps_per_episode"):
+        #         action = np.random.uniform(
+        #             self.action_space.low, self.action_space.high
+        #         )
+        #         state, _, _, _ = self.world_model.step(np.array([action]))
+        #         sequential_states.append(state[0])
+        #         step_count += 1
+        #     else:
+        #         step_count = 0
+        #         state = self.world_model.reset(batch_size=1)
+        #         sequential_states.append(state[0])
 
-        # sequential_states = []
-        # local_batch_size = int(
-        #     self.config.get("batch_size")
-        #     * self.config.get("num_epochs")
-        #     // self.config.get("max_steps_per_episode")
-        #     + 1
-        # )
-        # state = self.world_model.reset(batch_size=local_batch_size)
+        sequential_states = []
+        local_batch_size = int(
+            self.config.get("batch_size")
+            * self.config.get("num_epochs")
+            // self.config.get("max_steps_per_episode")
+            + 1
+        )
+        state = self.world_model.reset(batch_size=local_batch_size)
 
-        # for _ in range(self.config.get("max_steps_per_episode")):
-        #     actions = np.random.uniform(
-        #         self.action_space.low,
-        #         self.action_space.high,
-        #         size=(local_batch_size, *self.action_space.shape),
-        #     )
-        #     next_states, _, _, _ = self.world_model.step(actions)
-        #     sequential_states.extend(state)
-        #     state = next_states
+        for _ in range(self.config.get("max_steps_per_episode")):
+            actions = np.random.uniform(
+                self.action_space.low,
+                self.action_space.high,
+                size=(local_batch_size, *self.action_space.shape),
+            )
+            next_states, _, _, _ = self.world_model.step(actions)
+            sequential_states.extend(state)
+            state = next_states
 
         # Shuffle the sequential states
         np.random.shuffle(sequential_states)
-        self.initial_state_buffer.extend(sequential_states)
+        self.initial_state_buffer = sequential_states
 
     def store_trajectory(
         self,
@@ -279,6 +278,15 @@ class ActorCriticTrainer:
         print(f"Models saved to: {model_path}")
         return model_path
 
+    def pop_initial_state(self, batch_size):
+        """Pop a batch of initial states from the initial state buffer."""
+        return_value = self.initial_state_buffer[:batch_size]
+        self.initial_state_buffer = self.initial_state_buffer[batch_size:]
+        # Convert to numpy array first to avoid tensor creation warning
+        return_value = np.array(return_value)
+        return_value = torch.tensor(return_value, dtype=torch.float32)
+        return return_value
+
     def train(self):
         """
         Runs the main training loop with proper learning updates.
@@ -292,21 +300,18 @@ class ActorCriticTrainer:
         for epoch in range(num_epochs):
             self.reset_trajectory()
 
-            states = []
-            for _ in range(self.batch_size):
-                states.append(self.initial_state_buffer.pop())
-
-            states = torch.tensor(
-                states, dtype=torch.float32
-            )  # [batch_size, state_dim]
+            states = self.pop_initial_state(self.batch_size)
 
             states = self.world_model.reset(
                 batch_size=self.batch_size, initial_state=states
             )
 
             for i in range(self.imag_horizon):
+                states = torch.tensor(states, dtype=torch.float32)
                 actions = self.agent.get_action(states)
-                next_states, rewards, _, _ = self.world_model.step(actions)
+                next_states, rewards, terminated, info = self.world_model.step(
+                    actions.detach().numpy()
+                )
                 self.store_trajectory(
                     states,
                     actions,
@@ -371,7 +376,7 @@ class ActorCriticTrainer:
         eval_lengths = []
 
         for episode in range(num_episodes):
-            state = self.world_model.reset()
+            state = self.world_model.reset(batch_size=1)
             terminated = False
             total_reward = 0
             step_count = 0
