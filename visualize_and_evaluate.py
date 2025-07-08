@@ -12,8 +12,8 @@ from collections import deque
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.dirname(__file__))
 
-from world_models.ini_cartpole_wrapper import INICartPoleWrapper
-from agents.snn_actor_critic_agent import ActorCriticAgent
+from world_models.dmc_cartpole_wrapper import DMCCartPoleWrapper
+from agents.actor_critic_agent import ActorCriticAgent
 
 
 class ModelEvaluator:
@@ -49,29 +49,69 @@ class ModelEvaluator:
         )
 
         # Initialize environment
-        self.world_model = INICartPoleWrapper(
+        self.world_model = DMCCartPoleWrapper(
+            batch_size=1,
+            max_steps=1000,
             visualize=visualize,
             dt_simulation=self.config.get("dt_simulation", 0.02),
         )
 
-        # Initialize agent
-        action_space = self.world_model.env.action_space
+        # Initialize agent with correct parameters
+        state_dim = self.world_model.state_dim
+        action_dim = (self.world_model.action_dim,)
+
+        # Add missing config keys with defaults to ensure compatibility
+        default_config = {
+            "learning_rate": 0.001,
+            "eps": 1e-8,
+            "grad_clip": 10.0,
+            "gamma": 0.99,
+            "discount_lambda": 0.95,
+            "units": 64,
+            "act": "SiLU",
+            "norm": True,
+            "device": "cpu",
+            "reward_EMA": False,
+            "actor": {
+                "layers": 2,
+                "dist": "normal",
+                "std": "learned",
+                "min_std": 0.1,
+                "max_std": 1.0,
+                "temp": 0.1,
+                "unimix_ratio": 0.01,
+                "outscale": 1.0,
+                "entropy": 3e-4,
+            },
+            "critic": {
+                "layers": 2,
+                "dist": "symlog_disc",
+                "slow_target": False,
+                "outscale": 0.0,
+            },
+        }
+
+        # Merge config with defaults (config takes precedence)
+        def deep_merge_config(default, user_config):
+            """Deep merge two configuration dictionaries."""
+            result = default.copy()
+            for key, value in user_config.items():
+                if (
+                    key in result
+                    and isinstance(result[key], dict)
+                    and isinstance(value, dict)
+                ):
+                    result[key] = deep_merge_config(result[key], value)
+                else:
+                    result[key] = value
+            return result
+
+        merged_config = deep_merge_config(default_config, self.config)
+
         self.agent = ActorCriticAgent(
-            action_space=action_space,
-            state_dim=self.config.get("state_dim", 6),
-            hidden_dim=self.config.get("hidden_dim", 128),
-            num_steps=self.config.get("snn_time_steps", 1),
-            lr=self.config.get("learning_rate", 1e-3),
-            alpha=self.config.get("alpha", 0.9),
-            beta=self.config.get("beta", 0.9),
-            threshold=self.config.get("threshold", 1),
-            learn_alpha=self.config.get("learn_alpha", True),
-            learn_beta=self.config.get("learn_beta", True),
-            learn_threshold=self.config.get("learn_threshold", True),
-            weight_init_mean=self.config.get("weight_init_mean", 0.0),
-            weight_init_std=self.config.get("weight_init_std", 0.01),
-            max_std=self.config.get("max_std", 2.0),
-            min_std=self.config.get("min_std", 0.1),
+            config=merged_config,
+            state_dim=state_dim,
+            action_dim=action_dim,
         )
 
         # Load trained models
@@ -123,30 +163,32 @@ class ModelEvaluator:
             total_reward = 0
             step_count = 0
 
-            # Reset agent states
-            self.agent.actor.reset()
-
             # Store trajectory for analysis
-            trajectory = {"states": [], "actions": [], "rewards": [], "values": []}
+            trajectory = {"states": [], "actions": [], "rewards": []}
 
             while not terminated and step_count < max_steps_per_episode:
                 # Get action from agent
-                action = self.agent.get_action(state)
-                value = self.agent.get_value(state)
+                state_tensor = torch.tensor(
+                    state[0], dtype=torch.float32
+                )  # Use first env state
+                action = self.agent.get_action(state_tensor)
 
                 # Store trajectory data
-                trajectory["states"].append(state.copy())
-                trajectory["actions"].append(action.copy())
-                trajectory["values"].append(value)
+                trajectory["states"].append(state[0].copy())
+                trajectory["actions"].append(action.detach().numpy().copy())
 
-                # Environment step
-                next_state, reward, terminated, info = self.world_model.step(action)
+                # Environment step (reshape action for batch input)
+                action_np = action.detach().numpy().reshape(1, -1)
+                next_state, reward, terminated, info = self.world_model.step(action_np)
 
-                trajectory["rewards"].append(reward)
+                trajectory["rewards"].append(reward[0])  # Use first env reward
 
                 state = next_state
-                total_reward += reward
+                total_reward += reward[0]
                 step_count += 1
+
+                # Check if episode terminated
+                terminated = terminated[0]
 
             eval_rewards.append(total_reward)
             eval_lengths.append(step_count)
@@ -316,14 +358,14 @@ class ModelEvaluator:
         axes[1, 0].legend()
         axes[1, 0].grid(True, alpha=0.3)
 
-        # Value function estimates (from first episode)
+        # Action trajectory (from first episode)
         if results["trajectories"]:
-            first_episode_values = results["trajectories"][0]["values"]
-            steps = range(len(first_episode_values))
-            axes[1, 1].plot(steps, first_episode_values, "b-", linewidth=2)
+            first_episode_actions = results["trajectories"][0]["actions"]
+            steps = range(len(first_episode_actions))
+            axes[1, 1].plot(steps, first_episode_actions, "b-", linewidth=2)
             axes[1, 1].set_xlabel("Step")
-            axes[1, 1].set_ylabel("Value Estimate")
-            axes[1, 1].set_title("Value Function Estimates (First Episode)")
+            axes[1, 1].set_ylabel("Action Value")
+            axes[1, 1].set_title("Action Trajectory (First Episode)")
             axes[1, 1].grid(True, alpha=0.3)
 
         plt.tight_layout()
@@ -337,10 +379,12 @@ class ModelEvaluator:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate trained SNN Actor-Critic model"
+        description="Evaluate trained Actor-Critic model with DMC CartPole environment"
     )
     parser.add_argument(
-        "--model_path", type=str, help="Path to the saved model directory"
+        "--model_path",
+        type=str,
+        help="Path to the saved model directory (e.g., saved_models/snn_actor_critic_final_20240101_120000)",
     )
     parser.add_argument(
         "--episodes", type=int, default=10, help="Number of evaluation episodes"
@@ -356,6 +400,17 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if not args.model_path:
+        print("Error: --model_path is required")
+        print("Example usage:")
+        print(
+            "  python visualize_and_evaluate.py --model_path saved_models/snn_actor_critic_final_20240101_120000"
+        )
+        print(
+            "  python visualize_and_evaluate.py --model_path saved_models/snn_actor_critic_final_20240101_120000 --episodes 5 --plot-training"
+        )
+        return
 
     # Initialize evaluator
     evaluator = ModelEvaluator(
