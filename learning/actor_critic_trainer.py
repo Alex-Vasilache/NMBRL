@@ -14,6 +14,7 @@ import yaml
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from utils import tools
 from world_models.ini_cartpole_wrapper import INICartPoleWrapper
 from agents.actor_critic_agent import ActorCriticAgent
 
@@ -44,7 +45,7 @@ class ActorCriticTrainer:
         self.agent = ActorCriticAgent(
             config=config,
             state_dim=self.state_dim,
-            action_dim=self.action_space,
+            action_dim=self.action_space.shape,
         )
 
         # Training parameters
@@ -62,7 +63,7 @@ class ActorCriticTrainer:
         }
 
         self.initial_state_buffer = deque(
-            maxlen=config.get("num_episodes") * config.get("batch_size")
+            maxlen=config.get("num_epochs") * config.get("batch_size")
         )
 
         # Training statistics
@@ -87,7 +88,7 @@ class ActorCriticTrainer:
 
         # Log hyperparameters to TensorBoard
         hparam_dict = {
-            "learning_rate": config.get("learning_rate"),
+            "learning_rate": float(config.get("learning_rate")),
             "batch_size": self.batch_size,
             "imag_horizon": self.imag_horizon,
             "update_frequency": self.update_frequency,
@@ -101,7 +102,7 @@ class ActorCriticTrainer:
         metric_dict = {
             "final_avg_reward": 0.0,  # Will be updated at the end of training
             "final_best_reward": 0.0,
-            "total_episodes": config.get("num_episodes", 100),
+            "total_episodes": config.get("num_epochs", 100),
         }
         self.writer.add_hparams(hparam_dict, metric_dict)
 
@@ -211,7 +212,6 @@ class ActorCriticTrainer:
         torch.save(
             {
                 "model_state_dict": self.agent.actor.state_dict(),
-                "optimizer_state_dict": self.agent.actor_optimizer.state_dict(),
                 "model_config": {
                     "state_dim": self.state_dim,
                     "action_dim": self.action_space,
@@ -224,7 +224,6 @@ class ActorCriticTrainer:
         torch.save(
             {
                 "model_state_dict": self.agent.critic.state_dict(),
-                "optimizer_state_dict": self.agent.value_optimizer.state_dict(),
                 "model_config": {
                     "state_dim": self.state_dim,
                     "action_dim": self.action_space,
@@ -267,9 +266,6 @@ class ActorCriticTrainer:
         save_frequency = self.config.get("save_frequency")  # Save every N episodes
 
         print(f"Starting training for {num_epochs} epochs...")
-        print(
-            f"Agent configuration: Actor with {self.agent.actor.units} hidden units, {self.agent.actor.layers} layers, Critic with {self.agent.critic.units} hidden units, {self.agent.critic.layers} layers"
-        )
 
         for epoch in range(num_epochs):
             self.reset_trajectory()
@@ -406,6 +402,11 @@ if __name__ == "__main__":
     training_config = yaml.load(
         open("configs/actor_critic_config.yaml"), Loader=yaml.FullLoader
     )
+
+    tools.set_seed_everywhere(training_config["seed"])
+    if training_config["deterministic_run"]:
+        tools.enable_deterministic_run()
+
     trainer = ActorCriticTrainer(config=training_config)
     trainer.train()
     trainer.evaluate(num_episodes=5)

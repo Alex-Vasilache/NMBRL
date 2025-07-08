@@ -6,6 +6,7 @@ import numpy as np
 import math
 import sys
 import os
+import time
 
 from .base_world_model import BaseWorldModel
 
@@ -316,26 +317,158 @@ class INICartPoleWrapper(BaseWorldModel):
         """Create or resize environments to match the target batch size."""
         current_size = len(self.envs)
 
-        if batch_size > current_size:
-            # Create additional environments
-            for i in range(current_size, batch_size):
-                env = self.RealCartPole()
-                target_slider = self.TargetSlider()
-                env.target_slider = target_slider
-                env.dt_simulation = self.dt_simulation
+        # We need to change the CWD for environment creation
+        submodule_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
+            )
+        )
+        original_cwd = os.getcwd()
 
-                self.envs.append(env)
-                self.target_sliders.append(target_slider)
+        try:
+            os.chdir(submodule_root)
 
-        elif batch_size < current_size:
-            # Remove excess environments
-            self.envs = self.envs[:batch_size]
-            self.target_sliders = self.target_sliders[:batch_size]
+            if batch_size > current_size:
+                # Create additional environments sequentially to avoid global variable conflicts
+                for i in range(current_size, batch_size):
+                    env = self.RealCartPole()
+                    target_slider = self.TargetSlider()
+                    env.target_slider = target_slider
+                    env.dt_simulation = self.dt_simulation
+
+                    # Initialize with a safe reset to ensure parameters are set correctly
+                    env.set_cartpole_state_at_t0(
+                        reset_mode=0
+                    )  # Use mode 0 for safe initialization
+
+                    self.envs.append(env)
+                    self.target_sliders.append(target_slider)
+
+            elif batch_size < current_size:
+                # Remove excess environments
+                self.envs = self.envs[:batch_size]
+                self.target_sliders = self.target_sliders[:batch_size]
+
+        finally:
+            os.chdir(original_cwd)
 
         # Update batch size and related arrays
         self.batch_size = batch_size
         self.step_counts = np.zeros(self.batch_size, dtype=int)
         self.previous_actions = np.zeros(self.batch_size)
+
+    def _ensure_global_parameters(self):
+        """Ensure global CartPole parameters are properly set to prevent division by zero."""
+        try:
+            # Import the global variables and default parameters
+            from CartPole.cartpole_parameters import (
+                k,
+                m_cart,
+                m_pole,
+                g,
+                J_fric,
+                M_fric,
+                L,
+                v_max,
+                u_max,
+                controlNoiseScale,
+                controlNoiseBias,
+                controlNoiseCorrelation,
+                TrackHalfLength,
+                controlNoise_mode,
+                CP_PARAMETERS_DEFAULT,
+            )
+
+            # Check if any critical parameters are zero or invalid
+            critical_params = [
+                k[0] if k.ndim > 0 else k,
+                m_cart[0] if m_cart.ndim > 0 else m_cart,
+                m_pole[0] if m_pole.ndim > 0 else m_pole,
+                g[0] if g.ndim > 0 else g,
+                L[0] if L.ndim > 0 else L,
+            ]
+            param_names = ["k", "m_cart", "m_pole", "g", "L"]
+
+            invalid_params = []
+            for param, name in zip(critical_params, param_names):
+                if param == 0 or not np.isfinite(param):
+                    invalid_params.append(f"{name}={param}")
+
+            if invalid_params:
+                print(
+                    f"Warning: Invalid CartPole parameters detected: {invalid_params}"
+                )
+                print("Restoring parameters from defaults...")
+                # Restore parameters from defaults
+                (
+                    k[...],
+                    m_cart[...],
+                    m_pole[...],
+                    g[...],
+                    J_fric[...],
+                    M_fric[...],
+                    L[...],
+                    v_max[...],
+                    u_max[...],
+                    controlNoiseScale[...],
+                    controlNoiseBias[...],
+                    controlNoiseCorrelation[...],
+                    TrackHalfLength[...],
+                    controlNoise_mode,
+                ) = CP_PARAMETERS_DEFAULT.export_parameters()
+
+                # Verify restoration was successful
+                restored_params = [
+                    k[0] if k.ndim > 0 else k,
+                    m_cart[0] if m_cart.ndim > 0 else m_cart,
+                    m_pole[0] if m_pole.ndim > 0 else m_pole,
+                    g[0] if g.ndim > 0 else g,
+                    L[0] if L.ndim > 0 else L,
+                ]
+                print(
+                    f"Restored parameters: k={restored_params[0]}, m_cart={restored_params[1]}, m_pole={restored_params[2]}, g={restored_params[3]}, L={restored_params[4]}"
+                )
+
+        except Exception as e:
+            print(f"Error ensuring global parameters: {e}")
+            # If parameter checking fails, at least try to restore defaults
+            try:
+                from CartPole.cartpole_parameters import CP_PARAMETERS_DEFAULT
+                from CartPole.cartpole_parameters import (
+                    k,
+                    m_cart,
+                    m_pole,
+                    g,
+                    J_fric,
+                    M_fric,
+                    L,
+                    v_max,
+                    u_max,
+                    controlNoiseScale,
+                    controlNoiseBias,
+                    controlNoiseCorrelation,
+                    TrackHalfLength,
+                    controlNoise_mode,
+                )
+
+                (
+                    k[...],
+                    m_cart[...],
+                    m_pole[...],
+                    g[...],
+                    J_fric[...],
+                    M_fric[...],
+                    L[...],
+                    v_max[...],
+                    u_max[...],
+                    controlNoiseScale[...],
+                    controlNoiseBias[...],
+                    controlNoiseCorrelation[...],
+                    TrackHalfLength[...],
+                    controlNoise_mode,
+                ) = CP_PARAMETERS_DEFAULT.export_parameters()
+            except:
+                pass
 
     def step(self, actions: np.ndarray):
         """
@@ -363,17 +496,34 @@ class INICartPoleWrapper(BaseWorldModel):
         if len(actions) != self.batch_size:
             raise ValueError(f"Expected {self.batch_size} actions, got {len(actions)}")
 
-        # Step each environment
-        states = []
-        for i, (env, action_value) in enumerate(zip(self.envs, actions)):
-            # Set the action (motor power)
-            env.Q = float(action_value)
+        # Change to CartPole directory to ensure parameters are properly accessible
+        submodule_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
+            )
+        )
+        original_cwd = os.getcwd()
 
-            # Update the environment state
-            env.update_state()
+        try:
+            os.chdir(submodule_root)
 
-            # Get the new state
-            states.append(env.s_with_noise_and_latency)
+            # Step each environment
+            states = []
+            for i, (env, action_value) in enumerate(zip(self.envs, actions)):
+                # Ensure global parameters are valid before stepping
+                self._ensure_global_parameters()
+
+                # Set the action (motor power)
+                env.Q = float(action_value)
+
+                # Update the environment state
+                env.update_state()
+
+                # Get the new state
+                states.append(env.s_with_noise_and_latency)
+
+        finally:
+            os.chdir(original_cwd)
 
         states = np.array(states)  # Shape: (batch_size, state_dim)
 
@@ -435,20 +585,84 @@ class INICartPoleWrapper(BaseWorldModel):
         if batch_size is not None:
             self._create_environments(batch_size)
 
-        states = []
-        for i, env in enumerate(self.envs):
-            if initial_state is not None:
-                # Set specific initial state
-                # Convert normalized state back to raw state for the environment
-                raw_state = self._denormalize_state(initial_state[i])
-                env.set_cartpole_state_at_t0(
-                    reset_mode=2, s=raw_state, target_position=self.target_position
-                )
-                states.append(env.s)
-            else:
-                # Random initialization
-                env.set_cartpole_state_at_t0(reset_mode=1)
-                states.append(env.s)
+        # Change to the CartPole directory for proper parameter loading
+        submodule_root = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__), "..", "environments", "CartPoleSimulation"
+            )
+        )
+        original_cwd = os.getcwd()
+
+        try:
+            os.chdir(submodule_root)
+
+            states = []
+            # Reset environments sequentially to avoid global variable conflicts
+            for i, env in enumerate(self.envs):
+                if initial_state is not None:
+                    # Set specific initial state
+                    # Convert normalized state back to raw state for the environment
+                    raw_state = self._denormalize_state(initial_state[i])
+                    env.set_cartpole_state_at_t0(
+                        reset_mode=2, s=raw_state, target_position=self.target_position
+                    )
+                    states.append(env.s)
+                else:
+                    # Random initialization - ensure each environment gets different random state
+                    # Modify the environment's random state slightly to ensure diversity
+                    if hasattr(env, "rng_CartPole"):
+                        # Add some randomness to each environment's RNG state
+                        seed_offset = int((time.time() * 1000000) % 1000000) + i * 1000
+                        # Use the proper NumPy random generator API
+                        env.rng_CartPole = np.random.default_rng(seed_offset)
+
+                    # Reset to ensure parameters are loaded correctly first
+                    env.set_cartpole_state_at_t0(reset_mode=0)  # Safe reset first
+                    env.set_cartpole_state_at_t0(
+                        reset_mode=1
+                    )  # Then random initialization
+
+                    # Add additional randomization to ensure truly different states
+                    # Randomly vary position and velocities slightly
+                    env.s[self.POSITION_IDX] += np.random.uniform(
+                        -0.1, 0.1
+                    )  # Small position variation
+                    env.s[self.POSITIOND_IDX] += np.random.uniform(
+                        -0.1, 0.1
+                    )  # Small velocity variation
+                    env.s[self.ANGLE_IDX] += np.random.uniform(
+                        -0.05, 0.05
+                    )  # Additional angle variation
+                    env.s[self.ANGLED_IDX] += np.random.uniform(
+                        -0.05, 0.05
+                    )  # Additional angular velocity variation
+
+                    # Update cos and sin based on modified angle
+                    env.s[self.ANGLE_COS_IDX] = np.cos(env.s[self.ANGLE_IDX])
+                    env.s[self.ANGLE_SIN_IDX] = np.sin(env.s[self.ANGLE_IDX])
+
+                    # Clamp values to reasonable ranges
+                    env.s[self.POSITION_IDX] = np.clip(
+                        env.s[self.POSITION_IDX],
+                        -self.TrackHalfLength,
+                        self.TrackHalfLength,
+                    )
+                    env.s[self.POSITIOND_IDX] = np.clip(
+                        env.s[self.POSITIOND_IDX], -self.v_max, self.v_max
+                    )
+                    env.s[self.ANGLE_IDX] = np.clip(
+                        env.s[self.ANGLE_IDX], -np.pi, np.pi
+                    )
+                    env.s[self.ANGLED_IDX] = np.clip(
+                        env.s[self.ANGLED_IDX],
+                        -self.max_angular_velocity,
+                        self.max_angular_velocity,
+                    )
+
+                    states.append(env.s.copy())
+
+        finally:
+            os.chdir(original_cwd)
 
         # Reset step counters and previous actions
         self.step_counts = np.zeros(self.batch_size, dtype=int)
