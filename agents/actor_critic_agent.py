@@ -111,44 +111,35 @@ class ActorCriticAgent(BaseAgent):
         batch_size = states.shape[1]
         sequence_length = states.shape[0]
 
-        value_dists = []
-        values = []
-        # TODO see if we can simply do self.critic(states)
-        for i in range(sequence_length):
-            value_dist = self.critic(states[i].detach())
-            value_dists.append(value_dist)
-            values.append(value_dist.mode())
-
-        values = torch.stack(values)  # [sequence_length, batch_size]
+        value_dists = self.critic(states.detach())
+        values = value_dists.mode()
 
         lambda_returns = [0] * sequence_length
         lambda_returns[-1] = values[-1]
 
-        for i in range(sequence_length - 2, 0, -1):
+        for i in range(sequence_length - 2, -1, -1):
             lambda_returns[i] = rewards[i] + self.config["gamma"] * (
                 (1 - self.config["discount_lambda"]) * values[i]
                 + self.config["discount_lambda"] * lambda_returns[i + 1]
             )
 
-        lambda_returns = torch.stack(lambda_returns)[
-            :-1
-        ]  # [sequence_length - 1, batch_size]
+        lambda_returns = torch.stack(lambda_returns)  # [sequence_length, batch_size, 1]
 
         # These targets train the critic
-        critic_losses = []
-        for i in range(sequence_length - 1):
-            critic_losses.append(-value_dists[i].log_prob(lambda_returns[i].detach()))
+        critic_losses = -value_dists.log_prob(
+            lambda_returns.detach()
+        )  # [sequence_length, batch_size]
 
-        critic_losses = torch.stack(critic_losses)  # [sequence_length - 1, batch_size]
-        critic_loss = torch.mean(critic_losses)
+        critic_losses = critic_losses.unsqueeze(-1)  # [sequence_length, batch_size, 1]
+        critic_loss = torch.mean(critic_losses[:-1])
 
         if self.config["reward_EMA"]:
-            offset, scale = self.reward_ema(lambda_returns, self.ema_vals)
-            normed_target = (lambda_returns - offset) / scale
+            offset, scale = self.reward_ema(lambda_returns[:-1], self.ema_vals)
+            normed_target = (lambda_returns[:-1] - offset) / scale
             normed_base = (values[:-1] - offset) / scale
             advantages = (normed_target - normed_base).detach()
         else:
-            advantages = (lambda_returns - values[:-1]).detach()
+            advantages = (lambda_returns[:-1] - values[:-1]).detach()
 
         # Compute log probs
         policy_dists = self.actor(states.detach())
@@ -156,10 +147,14 @@ class ActorCriticAgent(BaseAgent):
             :-1
         ]  # [sequence_length - 1, batch_size]
 
+        log_probs = log_probs.unsqueeze(-1)  # [sequence_length - 1, batch_size, 1]
+
         # Compute entropy
         entropy_loss = (
-            policy_dists.entropy()[:-1] * self.config["actor"]["entropy"]
-        )  # [sequence_length - 1, batch_size]
+            policy_dists.entropy()[:-1] * float(self.config["actor"]["entropy"])
+        ).unsqueeze(
+            -1
+        )  # [sequence_length - 1, batch_size, 1]
 
         actor_loss = -(advantages * log_probs + entropy_loss)
         actor_loss = torch.mean(actor_loss)

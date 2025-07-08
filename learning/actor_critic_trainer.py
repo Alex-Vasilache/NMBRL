@@ -2,6 +2,7 @@
 # It manages the agent's interaction with the world model (real or learned),
 # and applies learning updates to the SNN-based agent's networks.
 
+from re import S
 import numpy as np
 import torch
 from collections import deque
@@ -105,59 +106,40 @@ class ActorCriticTrainer:
         }
         self.writer.add_hparams(hparam_dict, metric_dict)
 
-        self.prefill_initial_state_buffer()
+        self.fill_initial_state_buffer(
+            use_actor=False,
+            num_states=self.config.get("batch_size") * 10,
+        )
 
-    def prefill_initial_state_buffer(self):
+    def fill_initial_state_buffer(self, use_actor=False, num_states=None):
         # TODO: fill with initial states from the actual environment (replay buffer of the world model)
         """Prefill the initial state buffer with random sampled states."""
-        print(
-            f"Prefilling initial state buffer with {self.config.get('num_epochs') * self.config.get('batch_size')} states..."
-        )
 
-        sequential_states = []
-
-        step_count = 0
-        state = self.world_model.reset(batch_size=1)
-
-        # sequential_states.append(state[0])
-
-        # while len(sequential_states) < (
-        #     self.config.get("batch_size") * self.config.get("num_epochs")
-        # ):
-        #     if step_count < self.config.get("max_steps_per_episode"):
-        #         action = np.random.uniform(
-        #             self.action_space.low, self.action_space.high
-        #         )
-        #         state, _, _, _ = self.world_model.step(np.array([action]))
-        #         sequential_states.append(state[0])
-        #         step_count += 1
-        #     else:
-        #         step_count = 0
-        #         state = self.world_model.reset(batch_size=1)
-        #         sequential_states.append(state[0])
-
-        sequential_states = []
-        local_batch_size = int(
-            self.config.get("batch_size")
-            * self.config.get("num_epochs")
-            // self.config.get("max_steps_per_episode")
-            + 1
-        )
-        state = self.world_model.reset(batch_size=local_batch_size)
-
-        for _ in range(self.config.get("max_steps_per_episode")):
-            actions = np.random.uniform(
-                self.action_space.low,
-                self.action_space.high,
-                size=(local_batch_size, *self.action_space.shape),
+        if num_states is None:
+            num_states = (
+                self.config.get("batch_size") * self.config.get("num_epochs") * 10
             )
+        print(f"Filling initial state buffer with {num_states} states...")
+        state = self.world_model.reset()  # [batch_size, state_dim]
+        sequential_states = []
+
+        for _ in range(num_states * 10 // self.config.get("batch_size") + 1):
+            if use_actor:
+                state = torch.tensor(state, dtype=torch.float32)
+                actions = self.agent.get_action(state).detach().numpy()
+            else:
+                actions = np.random.uniform(
+                    self.action_space.low,
+                    self.action_space.high,
+                    size=(self.config.get("batch_size"), *self.action_space.shape),
+                )
             next_states, _, _, _ = self.world_model.step(actions)
             sequential_states.extend(state)
             state = next_states
 
         # Shuffle the sequential states
         np.random.shuffle(sequential_states)
-        self.initial_state_buffer = sequential_states
+        self.initial_state_buffer.extend(sequential_states[:num_states])
 
     def store_trajectory(
         self,
@@ -166,8 +148,10 @@ class ActorCriticTrainer:
         reward,
     ):
         """Store experience in the buffer."""
-        self.imagined_trajectories["states"].append(state.copy())  # s at [t]
-        self.imagined_trajectories["actions"].append(action.copy())  # a at [t]
+        self.imagined_trajectories["states"].append(state.detach().numpy())  # s at [t]
+        self.imagined_trajectories["actions"].append(
+            action.detach().numpy()
+        )  # a at [t]
         self.imagined_trajectories["rewards"].append(reward)  # r at [t]
 
     def reset_trajectory(self):
@@ -188,7 +172,9 @@ class ActorCriticTrainer:
         )  # [imag_horizon, batch_size, action_dim]
         rewards = torch.tensor(
             self.imagined_trajectories["rewards"], dtype=torch.float32
-        )  # [imag_horizon, batch_size]
+        ).unsqueeze(
+            -1
+        )  # [imag_horizon, batch_size, 1]
         return states, actions, rewards
 
     def train_agent(self):
@@ -280,6 +266,13 @@ class ActorCriticTrainer:
 
     def pop_initial_state(self, batch_size):
         """Pop a batch of initial states from the initial state buffer."""
+
+        if len(self.initial_state_buffer) < batch_size:
+            self.fill_initial_state_buffer(
+                use_actor=True,
+                num_states=batch_size * 10,
+            )
+
         return_value = self.initial_state_buffer[:batch_size]
         self.initial_state_buffer = self.initial_state_buffer[batch_size:]
         # Convert to numpy array first to avoid tensor creation warning
@@ -302,9 +295,7 @@ class ActorCriticTrainer:
 
             states = self.pop_initial_state(self.batch_size)
 
-            states = self.world_model.reset(
-                batch_size=self.batch_size, initial_state=states
-            )
+            states = self.world_model.reset(initial_state=states)
 
             for i in range(self.imag_horizon):
                 states = torch.tensor(states, dtype=torch.float32)
