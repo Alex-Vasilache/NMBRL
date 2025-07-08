@@ -172,18 +172,10 @@ class ActorCriticTrainer:
     def train_agent(self):
         """Perform a training step on the agent using collected experience."""
 
-        batch = self.sample_batch()
+        states, actions, rewards = self.get_trajectory()
 
         # Update the agent with sequences
-        losses = self.agent.update(
-            states=batch["states"],
-            actions=batch["actions"],
-            rewards=batch["rewards"],
-            next_states=batch["next_states"],
-            dones=batch["dones"],
-            gamma=self.gamma,
-            discount_lambda=self.discount_lambda,
-        )
+        losses = self.agent.update(states=states, actions=actions, rewards=rewards)
 
         self.training_losses.append(losses)
 
@@ -194,9 +186,6 @@ class ActorCriticTrainer:
             )
             self.writer.add_scalar(
                 "Loss/Critic", losses["critic_loss"], self.training_step
-            )
-            self.writer.add_scalar(
-                "Value/Mean_Value", losses["mean_value"], self.training_step
             )
             self.training_step += 1
 
@@ -234,7 +223,7 @@ class ActorCriticTrainer:
         # Save critic model
         torch.save(
             {
-                "model_state_dict": self.agent.value.state_dict(),
+                "model_state_dict": self.agent.critic.state_dict(),
                 "optimizer_state_dict": self.agent.value_optimizer.state_dict(),
                 "model_config": {
                     "state_dim": self.state_dim,
@@ -279,7 +268,7 @@ class ActorCriticTrainer:
 
         print(f"Starting training for {num_epochs} epochs...")
         print(
-            f"Agent configuration: Actor with {self.agent.actor.units} hidden units, {self.agent.actor.layers} layers, Critic with {self.agent.value.units} hidden units, {self.agent.value.layers} layers"
+            f"Agent configuration: Actor with {self.agent.actor.units} hidden units, {self.agent.actor.layers} layers, Critic with {self.agent.critic.units} hidden units, {self.agent.critic.layers} layers"
         )
 
         for epoch in range(num_epochs):
@@ -307,17 +296,11 @@ class ActorCriticTrainer:
                 )
                 states = next_states
 
-            states, actions, rewards = self.get_trajectory()
-
             losses = self.train_agent()
             print(
                 f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
                 f"Critic Loss: {losses['critic_loss']:.4f}"
             )
-
-            self.writer.add_scalar("Training/Actor_Loss", losses["actor_loss"], epoch)
-            self.writer.add_scalar("Training/Critic_Loss", losses["critic_loss"], epoch)
-
             # Save models periodically if requested
             if save_frequency and (epoch + 1) % save_frequency == 0:
                 self.save_models(epoch=epoch + 1)
@@ -364,7 +347,7 @@ class ActorCriticTrainer:
 
         # Set agent to evaluation mode
         self.agent.actor.eval()
-        self.agent.value.eval()
+        self.agent.critic.eval()
 
         eval_rewards = []
         eval_lengths = []
@@ -392,7 +375,7 @@ class ActorCriticTrainer:
 
         # Set agent back to training mode
         self.agent.actor.train()
-        self.agent.value.train()
+        self.agent.critic.train()
 
         # Calculate evaluation statistics
         eval_avg_reward = np.mean(eval_rewards)

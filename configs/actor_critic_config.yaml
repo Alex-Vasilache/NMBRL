@@ -5,22 +5,24 @@ learning_rate: 1e-5
 eps: 1e-5
 grad_clip: 100.0
 max_steps_per_episode: 10000
+device: 'cpu'
+reward_EMA: True
 
 # Behavior
 gamma: 0.997            # Discount factor for the reward
 discount_lambda: 0.95   # return mixing factor
-imag_horizon: 16        # Horizon for imagined trajectories
+imag_horizon: 15        # Horizon for imagined trajectories
 
 # Simulation 
 visualize: True
 dt_simulation: 0.02
 
-#Model
+# Model
 act: 'SiLU'             # Activation function
 norm: True              # Layer Normalization
 units: 32               # Number of neurons in each layer
 
-# Training
+# Logging
 save_dir: "saved_models"  # Directory to save trained models
 log_dir: "runs"  # Directory for TensorBoard logs
 save_frequency: 10  # Save models every N episodes (None to disable)

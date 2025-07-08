@@ -28,6 +28,24 @@ def symexp(x):
     return torch.sign(x) * (torch.exp(torch.abs(x)) - 1.0)
 
 
+class RewardEMA:
+    """running mean and std"""
+
+    def __init__(self, device, alpha=1e-2):
+        self.device = device
+        self.alpha = alpha
+        self.range = torch.tensor([0.05, 0.95], device=device)
+
+    def __call__(self, x, ema_vals):
+        flat_x = torch.flatten(x.detach())
+        x_quantile = torch.quantile(input=flat_x, q=self.range)
+        # this should be in-place operation
+        ema_vals[:] = self.alpha * x_quantile + (1 - self.alpha) * ema_vals
+        scale = torch.clip(ema_vals[1] - ema_vals[0], min=1.0)
+        offset = ema_vals[0]
+        return offset.detach(), scale.detach()
+
+
 class RequiresGrad:
     def __init__(self, model):
         self._model = model
