@@ -2,7 +2,6 @@
 # It manages the agent's interaction with the world model (real or learned),
 # and applies learning updates to the SNN-based agent's networks.
 
-from re import S
 import numpy as np
 import torch
 from collections import deque
@@ -164,6 +163,19 @@ class ActorCriticTrainer:
 
     def get_trajectory(self):
         """Get the imagined trajectory."""
+        if isinstance(self.imagined_trajectories["states"], list):
+            self.imagined_trajectories["states"] = np.array(
+                self.imagined_trajectories["states"]
+            )
+        if isinstance(self.imagined_trajectories["actions"], list):
+            self.imagined_trajectories["actions"] = np.array(
+                self.imagined_trajectories["actions"]
+            )
+        if isinstance(self.imagined_trajectories["rewards"], list):
+            self.imagined_trajectories["rewards"] = np.array(
+                self.imagined_trajectories["rewards"]
+            )
+
         states = torch.tensor(
             self.imagined_trajectories["states"], dtype=torch.float32
         )  # [imag_horizon, batch_size, state_dim]
@@ -374,7 +386,8 @@ class ActorCriticTrainer:
 
             while not terminated and step_count < 1000:
                 # Get action (deterministic for evaluation)
-                action = self.agent.get_action(state)
+                state = torch.tensor(state, dtype=torch.float32)
+                action = self.agent.get_action(state).detach().numpy()
                 next_state, reward, terminated, info = self.world_model.step(action)
 
                 state = next_state
@@ -384,7 +397,7 @@ class ActorCriticTrainer:
             eval_rewards.append(total_reward)
             eval_lengths.append(step_count)
             print(
-                f"Eval Episode {episode+1}: Reward: {total_reward:.2f}, Steps: {step_count}"
+                f"Eval Episode {episode+1}: Reward: {total_reward[0]:.2f}, Steps: {step_count}"
             )
 
         # Set agent back to training mode

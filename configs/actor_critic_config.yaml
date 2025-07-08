@@ -1,7 +1,7 @@
 # Training
 num_epochs: 100
-batch_size: 512
-learning_rate: 1e-5
+batch_size: 256
+learning_rate: 1e-3
 eps: 1e-5
 grad_clip: 100.0
 max_steps_per_episode: 10000
@@ -9,6 +9,7 @@ device: 'cpu'
 reward_EMA: True
 seed: 42
 deterministic_run: False
+
 
 # Behavior
 gamma: 0.997            # Discount factor for the reward
@@ -22,7 +23,7 @@ dt_simulation: 0.02
 # Model
 act: 'SiLU'             # Activation function
 norm: True              # Layer Normalization
-units: 32               # Number of neurons in each layer
+units: 64               # Number of neurons in each layer
 
 # Logging
 save_dir: "saved_models"  # Directory to save trained models
@@ -46,3 +47,6 @@ critic:
   layers: 2
   dist: 'symlog_disc'
   outscale: 0.0
+  slow_target: True
+  slow_target_update: 1
+  slow_target_fraction: 0.02
