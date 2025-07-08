@@ -196,7 +196,7 @@ class ActorCriticAgent(BaseAgent):
         entropy_bonus_mean = torch.mean(entropy_loss)
 
         actor_loss = (
-            policy_gradient_loss_mean + entropy_bonus_mean
+            policy_gradient_loss_mean - entropy_bonus_mean
         )  # entropy_loss already includes entropy coefficient
 
         self._actor_opt(actor_loss, self.actor.parameters())

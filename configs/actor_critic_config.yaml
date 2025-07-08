@@ -1,8 +1,8 @@
 # Training
-num_epochs: 1000000
+num_epochs: 10000
 batch_size: 16
 batch_length: 1000
-learning_rate: 3e-5
+learning_rate: 3e-3
 eps: 1e-5
 grad_clip: 100.0
 max_steps_per_episode: 10000
@@ -29,7 +29,7 @@ units: 64               # Number of neurons in each layer
 # Logging
 save_dir: "saved_models"  # Directory to save trained models
 log_dir: "runs"  # Directory for TensorBoard logs
-save_frequency: 10000  # Save models every N episodes (None to disable)
+save_frequency: 1000  # Save models every N episodes (None to disable)
 
 # Evaluation (runs at same frequency as saves)
 eval_episodes: 10  # Number of episodes for intermediate evaluation
