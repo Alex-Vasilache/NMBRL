@@ -166,9 +166,9 @@ class ActorCriticAgent(BaseAgent):
             offset, scale = self.reward_ema(lambda_returns[:-1], self.ema_vals)
             normed_target = (lambda_returns[:-1] - offset) / scale
             normed_base = (values[:-1] - offset) / scale
-            advantages = (normed_target - normed_base).detach()
+            advantages = normed_target - normed_base
         else:
-            advantages = (lambda_returns[:-1] - values[:-1]).detach()
+            advantages = lambda_returns[:-1] - values[:-1]
 
         # Compute log probs
         policy_dists = self.actor(states.detach())
@@ -185,7 +185,12 @@ class ActorCriticAgent(BaseAgent):
             -1
         )  # [sequence_length - 1, batch_size, 1]
 
-        actor_loss = -(advantages * log_probs * weights[:-1] + entropy_loss)
+        if self.config["actor"]["imag_grad"] == "dynamics":
+            actor_target = advantages
+        else:
+            actor_target = advantages.detach() * log_probs
+
+        actor_loss = -(actor_target * weights[:-1] + entropy_loss)
         actor_loss = torch.mean(actor_loss)
 
         self._actor_opt(actor_loss, self.actor.parameters())

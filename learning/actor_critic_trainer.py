@@ -106,39 +106,44 @@ class ActorCriticTrainer:
         self.writer.add_hparams(hparam_dict, metric_dict)
 
         self.fill_initial_state_buffer(
-            use_actor=False,
-            num_states=self.config.get("batch_size") * 10,
+            num_states=self.config.get("batch_size") * self.config.get("batch_length"),
         )
 
-    def fill_initial_state_buffer(self, use_actor=False, num_states=None):
+    def fill_initial_state_buffer(self, num_states=None):
         # TODO: fill with initial states from the actual environment (replay buffer of the world model)
         """Prefill the initial state buffer with random sampled states."""
 
         if num_states is None:
-            num_states = (
-                self.config.get("batch_size") * self.config.get("num_epochs") * 10
-            )
-        print(f"Filling initial state buffer with {num_states} states...")
+            num_states = self.config.get("batch_size") * self.config.get("batch_length")
+        # print(f"Filling initial state buffer with {num_states} states...")
         state = self.world_model.reset()  # [batch_size, state_dim]
         sequential_states = []
 
-        for _ in range(num_states * 10 // self.config.get("batch_size") + 1):
-            if use_actor:
-                state = torch.tensor(state, dtype=torch.float32)
-                actions = self.agent.get_action(state).detach().numpy()
-            else:
-                actions = np.random.uniform(
-                    self.action_space.low,
-                    self.action_space.high,
-                    size=(self.config.get("batch_size"), *self.action_space.shape),
-                )
+        for _ in range(num_states // self.config.get("batch_size") // 2):
+
+            actions = np.random.uniform(
+                self.action_space.low,
+                self.action_space.high,
+                size=(self.config.get("batch_size"), *self.action_space.shape),
+            )
+            next_states, _, _, _ = self.world_model.step(actions)
+            sequential_states.extend(state)
+            state = next_states
+
+        state = self.world_model.reset()
+
+        for _ in range(num_states // self.config.get("batch_size") // 2):
+
+            state = torch.tensor(state, dtype=torch.float32)
+            actions = self.agent.get_action(state).detach().numpy()
+
             next_states, _, _, _ = self.world_model.step(actions)
             sequential_states.extend(state)
             state = next_states
 
         # Shuffle the sequential states
         np.random.shuffle(sequential_states)
-        self.initial_state_buffer.extend(sequential_states[:num_states])
+        self.initial_state_buffer.extend(sequential_states)
 
     def store_trajectory(
         self,
@@ -219,14 +224,14 @@ class ActorCriticTrainer:
         self.training_losses.append(losses)
 
         # Log losses to TensorBoard
-        if losses:
+        if losses and self.training_step % 10 == 0:
             self.writer.add_scalar(
                 "Loss/Actor", losses["actor_loss"], self.training_step
             )
             self.writer.add_scalar(
                 "Loss/Critic", losses["critic_loss"], self.training_step
             )
-            self.training_step += 1
+        self.training_step += 1
 
         return losses
 
@@ -300,8 +305,7 @@ class ActorCriticTrainer:
 
         if len(self.initial_state_buffer) < batch_size:
             self.fill_initial_state_buffer(
-                use_actor=True,
-                num_states=batch_size * 10,
+                num_states=batch_size * self.config.get("batch_length"),
             )
 
         return_value = self.initial_state_buffer[:batch_size]
@@ -344,10 +348,11 @@ class ActorCriticTrainer:
                 states = next_states
 
             losses = self.train_agent()
-            print(
-                f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
-                f"Critic Loss: {losses['critic_loss']:.4f}"
-            )
+            if epoch % 1000 == 0:
+                print(
+                    f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
+                    f"Critic Loss: {losses['critic_loss']:.4f}"
+                )
             # Save models and evaluate periodically if requested
             if save_frequency and (epoch + 1) % save_frequency == 0:
                 self.save_models(epoch=epoch + 1)
@@ -525,7 +530,7 @@ class ActorCriticTrainer:
         # Set visualization if the world model supports it
         if hasattr(self.world_model, "visualize"):
             original_visualize = self.world_model.visualize
-            self.world_model.visualize = visualize
+            self.world_model.set_visualize(visualize)
         else:
             original_visualize = None
 
@@ -576,19 +581,14 @@ class ActorCriticTrainer:
         # Calculate evaluation statistics
         eval_avg_reward = np.mean(eval_rewards)
         eval_std_reward = np.std(eval_rewards)
-        eval_avg_length = np.mean(eval_lengths)
-        eval_std_length = np.std(eval_lengths)
 
         print(f"Evaluation Results:")
         print(f"  Average Reward: {eval_avg_reward:.2f} ± {eval_std_reward:.2f}")
-        print(f"  Average Length: {eval_avg_length:.1f} ± {eval_std_length:.1f}")
 
         # Log evaluation results to TensorBoard
         if hasattr(self, "writer") and self.writer is not None:
             self.writer.add_scalar("Evaluation/Avg_Reward", eval_avg_reward, 0)
             self.writer.add_scalar("Evaluation/Std_Reward", eval_std_reward, 0)
-            self.writer.add_scalar("Evaluation/Avg_Length", eval_avg_length, 0)
-            self.writer.add_scalar("Evaluation/Std_Length", eval_std_length, 0)
             self.writer.add_scalar("Evaluation/Best_Reward", np.max(eval_rewards), 0)
             self.writer.add_scalar("Evaluation/Worst_Reward", np.min(eval_rewards), 0)
 
