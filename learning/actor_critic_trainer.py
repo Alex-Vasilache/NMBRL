@@ -365,7 +365,7 @@ class ActorCriticTrainer:
             self.writer.close()
             print(f"TensorBoard writer closed. Logs saved to: {self.tb_log_dir}")
 
-    def evaluate(self, num_episodes=10):
+    def evaluate(self, num_episodes=10, visualize=False):
         """
         Evaluate the trained agent without learning updates.
         """
@@ -374,6 +374,7 @@ class ActorCriticTrainer:
         # Set agent to evaluation mode
         self.agent.actor.eval()
         self.agent.critic.eval()
+        self.world_model.set_visualize(visualize)
 
         eval_rewards = []
         eval_lengths = []
@@ -441,3 +442,4 @@ if __name__ == "__main__":
     trainer = ActorCriticTrainer(config=training_config)
     trainer.train()
     trainer.evaluate(num_episodes=5)
+    trainer.evaluate(num_episodes=1, visualize=True)

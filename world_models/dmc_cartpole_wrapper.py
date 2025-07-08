@@ -285,3 +285,11 @@ class DMCCartPoleWrapper(BaseWorldModel):
 
         if self.visualize:
             cv2.destroyAllWindows()
+
+    def set_visualize(self, visualize):
+        """Set the visualize flag."""
+        self.visualize = visualize
+        if self.visualize:
+            self._init_visualization()
+        else:
+            cv2.destroyAllWindows()
