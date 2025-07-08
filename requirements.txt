@@ -5,3 +5,4 @@ PyYAML
 dm_control
 opencv-python-headless
 gymnasium
+stable-baselines3[extra]

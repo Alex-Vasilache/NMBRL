@@ -11,13 +11,16 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 
-from world_models.dmc_cartpole_wrapper import DMCCartPoleWrapper
+from world_models.ini_gymlike_cartpole_wrapper import INIGymlikeCartPoleWrapper
+from agents.actor_critic_agent import ActorCriticAgent
+from typing import Optional, Union
+from gymnasium.spaces import Space
+
 
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils import tools
-from agents.actor_critic_agent import ActorCriticAgent
 
 
 class ActorCriticTrainer:
@@ -26,6 +29,10 @@ class ActorCriticTrainer:
     Manages the training loop, including agent-environment interaction and learning updates.
     """
 
+    world_model: INIGymlikeCartPoleWrapper
+    action_space: Space
+    state_dim: int
+
     def __init__(self, config):
         """
         Initializes the trainer.
@@ -33,16 +40,18 @@ class ActorCriticTrainer:
         :param config: A dictionary containing training parameters.
         """
         self.config = config
-        self.world_model = DMCCartPoleWrapper(
-            batch_size=config.get("batch_size"),
+        self.world_model = INIGymlikeCartPoleWrapper(
             max_steps=config.get("max_steps_per_episode"),
-            visualize=config.get("visualize"),
-            dt_simulation=config.get("dt_simulation"),
+            visualize=config.get("visualize", False),
+            task=config.get("task", "swingup"),
+            cartpole_type=config.get("cartpole_type", "custom_sim"),
         )
 
         # Initialize the Actor-Critic agent
-        self.action_space = self.world_model.envs[0].action_space
-        self.state_dim = self.world_model.envs[0].observation_space.shape[0]
+        self.action_space = self.world_model.action_space
+        assert self.action_space is not None, "Action space cannot be None"
+        self.state_dim = self.world_model.observation_space.shape[0]
+        assert self.state_dim is not None, "State dimension cannot be None"
         self.agent = ActorCriticAgent(
             config=config,
             state_dim=self.state_dim,
@@ -600,9 +609,7 @@ class ActorCriticTrainer:
         # Set visualization if the world model supports it
         if hasattr(self.world_model, "visualize"):
             original_visualize = self.world_model.visualize
-            self.world_model.set_visualize(visualize)
-        else:
-            original_visualize = None
+            self.world_model.visualize = visualize
 
         eval_rewards = []
         eval_lengths = []

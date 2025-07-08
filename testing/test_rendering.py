@@ -6,32 +6,35 @@ import time
 # Add project root to path for proper imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from world_models.dmc_cartpole_wrapper import DMCCartPoleWrapper
+from world_models.ini_gymlike_cartpole_wrapper import INIGymlikeCartPoleWrapper
 
 
-def test_long_rendering_opencv():
+def test_long_rendering_gymlike():
     """
-    Tests the rendering of the DMCCartPoleWrapper over a very long period with random actions,
-    using the faster OpenCV implementation.
+    Tests the rendering of the INIGymlikeCartPoleWrapper over a very long period with random actions.
     """
     print(
-        "Testing long-term rendering with random actions (OpenCV) for 10,000 steps..."
+        "Testing long-term rendering with random actions (Gymlike) for 10,000 steps..."
     )
     try:
         num_steps = 10000
         # The environment will now run for the full num_steps before terminating
-        env = DMCCartPoleWrapper(
-            batch_size=1,
+        env = INIGymlikeCartPoleWrapper(
             max_steps=num_steps,
             visualize=True,
-            dt_simulation=0.02,
+            task="swingup",
+            cartpole_type="custom_sim",
         )
-        env.reset()
+        env.reset(batch_size=1)
 
         print(f"\n--- Running for {num_steps} steps with random actions ---")
 
         for i in range(num_steps):
-            action = np.random.uniform(-1.0, 1.0, size=(1, env.action_dim))
+            action = np.random.uniform(
+                env.action_space.low,
+                env.action_space.high,
+                size=(1, *env.action_space.shape),
+            )
             next_state, reward, terminated, info = env.step(action)
 
             # Print status less frequently to avoid flooding the console
@@ -42,11 +45,11 @@ def test_long_rendering_opencv():
 
             time.sleep(0.001)
 
-            if terminated[0] and i < num_steps - 1:
+            if terminated[0]:
                 print(
-                    f"Episode terminated unexpectedly at step {i+1}. This shouldn't happen."
+                    f"Episode terminated at step {i+1}, which is expected with random actions. Resetting."
                 )
-                break
+                env.reset()
 
         print("\nClosing environment...")
         env.close()
@@ -60,4 +63,4 @@ def test_long_rendering_opencv():
 
 
 if __name__ == "__main__":
-    test_long_rendering_opencv()
+    test_long_rendering_gymlike()
