@@ -1,0 +1,7 @@
+numpy
+torch
+tensorboard
+PyYAML
+dm_control
+opencv-python-headless
+gymnasium

@@ -4,7 +4,6 @@
 *.pyc
 *.csv
 *.png
-*.txt
 *.ckpt.*
 *.pt
 *.env

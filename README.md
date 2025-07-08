@@ -269,8 +269,47 @@ L_{Actor}(\phi) = L_{PG}(\phi) + L_{Entropy}(\phi)
 $$
 This loss encourages the policy $\pi_\phi$ to select action sequences that produce trajectories with high cumulative reward, as judged by the learned world model and value function.
 
+## 6. Installation
 
+To set up the environment and run the project, follow these steps:
 
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-username/Neuromorphic_MBRL.git
+    cd Neuromorphic_MBRL
+    ```
+
+2.  **Create and activate a Conda environment:**
+    This project uses Conda to manage dependencies. Make sure you have Anaconda or Miniconda installed.
+
+    ```bash
+    # Create a new conda environment with Python 3.11
+    conda create -n NMBRL python=3.11 -y
+
+    # Activate the environment
+    conda activate NMBRL
+    ```
+
+3.  **Install system-level dependencies for dm_control:**
+    The DeepMind Control Suite requires some system packages for rendering, even in a headless environment.
+
+    ```bash
+    # On Debian/Ubuntu
+    sudo apt-get update && sudo apt-get install -y libgl1-mesa-glx libosmesa6-dev libglew-dev patchelf
+    ```
+
+4.  **Install the required Python packages:**
+    The dependencies are listed in the `requirements.txt` file.
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+5.  **Run the training script:**
+    To verify that the installation was successful, you can run the Actor-Critic training script:
+    ```bash
+    python -m learning.actor_critic_trainer
+    ```
 
 ## 7. Usage and Monitoring
 
