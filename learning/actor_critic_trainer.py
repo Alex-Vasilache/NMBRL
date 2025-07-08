@@ -119,9 +119,12 @@ class ActorCriticTrainer:
 
         step_count = 0
         state = self.world_model.reset(batch_size=1)
+
         sequential_states.append(state[0])
 
-        while len(sequential_states) < self.config.get("batch_size"):
+        while len(sequential_states) < (
+            self.config.get("batch_size") * self.config.get("num_epochs")
+        ):
             if step_count < self.config.get("max_steps_per_episode"):
                 action = np.random.uniform(
                     self.action_space.low, self.action_space.high
@@ -133,6 +136,25 @@ class ActorCriticTrainer:
                 step_count = 0
                 state = self.world_model.reset(batch_size=1)
                 sequential_states.append(state[0])
+
+        # sequential_states = []
+        # local_batch_size = int(
+        #     self.config.get("batch_size")
+        #     * self.config.get("num_epochs")
+        #     // self.config.get("max_steps_per_episode")
+        #     + 1
+        # )
+        # state = self.world_model.reset(batch_size=local_batch_size)
+
+        # for _ in range(self.config.get("max_steps_per_episode")):
+        #     actions = np.random.uniform(
+        #         self.action_space.low,
+        #         self.action_space.high,
+        #         size=(local_batch_size, *self.action_space.shape),
+        #     )
+        #     next_states, _, _, _ = self.world_model.step(actions)
+        #     sequential_states.extend(state)
+        #     state = next_states
 
         # Shuffle the sequential states
         np.random.shuffle(sequential_states)
