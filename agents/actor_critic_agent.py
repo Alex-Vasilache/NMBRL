@@ -190,15 +190,44 @@ class ActorCriticAgent(BaseAgent):
         else:
             actor_target = advantages.detach() * log_probs
 
-        actor_loss = -(actor_target * weights[:-1] + entropy_loss)
-        actor_loss = torch.mean(actor_loss)
+        # Separate policy gradient loss from entropy bonus
+        policy_gradient_loss = -(actor_target * weights[:-1])
+        policy_gradient_loss_mean = torch.mean(policy_gradient_loss)
+        entropy_bonus_mean = torch.mean(entropy_loss)
+
+        actor_loss = (
+            policy_gradient_loss_mean + entropy_bonus_mean
+        )  # entropy_loss already includes entropy coefficient
 
         self._actor_opt(actor_loss, self.actor.parameters())
         self._value_opt(critic_loss, self.critic.parameters())
 
+        # Calculate additional metrics for detailed logging
+        mean_reward = torch.mean(rewards)
+        mean_lambda_return = torch.mean(lambda_returns[:-1])
+        std_advantage = torch.std(advantages)
+        mean_entropy = torch.mean(policy_dists.entropy()[:-1])
+
+        # Calculate slow target loss separately if enabled
+        slow_target_loss = torch.tensor(0.0)
+        if self.config["critic"]["slow_target"]:
+            # Use the same loss calculation as the main critic loss but for slow target
+            slow_target_log_prob = -value_dists.log_prob(slow_target.mode().detach())
+            slow_target_loss_full = slow_target_log_prob.unsqueeze(
+                -1
+            )  # [sequence_length, batch_size, 1]
+            slow_target_loss = torch.mean(slow_target_loss_full[:-1] * weights[:-1])
+
         return {
             "critic_loss": critic_loss.item(),
             "actor_loss": actor_loss.item(),
+            "policy_gradient_loss": policy_gradient_loss_mean.item(),
+            "entropy_bonus": entropy_bonus_mean.item(),
+            "slow_target_loss": slow_target_loss.item(),
             "mean_value": values.mean().item(),
             "mean_advantage": advantages.mean().item(),
+            "std_advantage": std_advantage.item(),
+            "mean_reward": mean_reward.item(),
+            "mean_lambda_return": mean_lambda_return.item(),
+            "mean_entropy": mean_entropy.item(),
         }

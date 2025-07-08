@@ -231,6 +231,46 @@ class ActorCriticTrainer:
             self.writer.add_scalar(
                 "Loss/Critic", losses["critic_loss"], self.training_step
             )
+
+            # Log detailed actor loss components
+            self.writer.add_scalar(
+                "Loss/Policy_Gradient",
+                losses["policy_gradient_loss"],
+                self.training_step,
+            )
+            self.writer.add_scalar(
+                "Loss/Entropy_Bonus", losses["entropy_bonus"], self.training_step
+            )
+
+            # Log critic loss components
+            if losses["slow_target_loss"] > 0:  # Only log if slow target is enabled
+                self.writer.add_scalar(
+                    "Loss/Slow_Target", losses["slow_target_loss"], self.training_step
+                )
+
+            # Log value function and advantage statistics
+            self.writer.add_scalar(
+                "Values/Mean_Value", losses["mean_value"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Values/Mean_Advantage", losses["mean_advantage"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Values/Std_Advantage", losses["std_advantage"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Values/Mean_Lambda_Return",
+                losses["mean_lambda_return"],
+                self.training_step,
+            )
+
+            # Log reward and policy statistics
+            self.writer.add_scalar(
+                "Stats/Mean_Reward", losses["mean_reward"], self.training_step
+            )
+            self.writer.add_scalar(
+                "Stats/Mean_Entropy", losses["mean_entropy"], self.training_step
+            )
         self.training_step += 1
 
         return losses
@@ -351,7 +391,10 @@ class ActorCriticTrainer:
             if epoch % 1000 == 0:
                 print(
                     f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
-                    f"Critic Loss: {losses['critic_loss']:.4f}"
+                    f"Critic Loss: {losses['critic_loss']:.4f}, "
+                    f"Policy Grad: {losses['policy_gradient_loss']:.4f}, "
+                    f"Entropy: {losses['entropy_bonus']:.4f}, "
+                    f"Mean Advantage: {losses['mean_advantage']:.4f}"
                 )
             # Save models and evaluate periodically if requested
             if save_frequency and (epoch + 1) % save_frequency == 0:
@@ -367,12 +410,36 @@ class ActorCriticTrainer:
             final_losses = self.training_losses[-1]
             print(f"Final Actor Loss: {final_losses['actor_loss']:.4f}")
             print(f"Final Critic Loss: {final_losses['critic_loss']:.4f}")
+            print(
+                f"Final Policy Gradient Loss: {final_losses['policy_gradient_loss']:.4f}"
+            )
+            print(f"Final Entropy Bonus: {final_losses['entropy_bonus']:.4f}")
+            print(f"Final Mean Advantage: {final_losses['mean_advantage']:.4f}")
+            print(f"Final Mean Entropy: {final_losses['mean_entropy']:.4f}")
 
             self.writer.add_scalar(
                 "Training/Final_Actor_Loss", final_losses["actor_loss"], num_epochs
             )
             self.writer.add_scalar(
                 "Training/Final_Critic_Loss", final_losses["critic_loss"], num_epochs
+            )
+            self.writer.add_scalar(
+                "Training/Final_Policy_Gradient",
+                final_losses["policy_gradient_loss"],
+                num_epochs,
+            )
+            self.writer.add_scalar(
+                "Training/Final_Entropy_Bonus",
+                final_losses["entropy_bonus"],
+                num_epochs,
+            )
+            self.writer.add_scalar(
+                "Training/Final_Mean_Advantage",
+                final_losses["mean_advantage"],
+                num_epochs,
+            )
+            self.writer.add_scalar(
+                "Training/Final_Mean_Entropy", final_losses["mean_entropy"], num_epochs
             )
 
         # Close TensorBoard writer
