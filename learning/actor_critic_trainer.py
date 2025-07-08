@@ -163,28 +163,47 @@ class ActorCriticTrainer:
 
     def get_trajectory(self):
         """Get the imagined trajectory."""
-        if isinstance(self.imagined_trajectories["states"], list):
-            self.imagined_trajectories["states"] = np.array(
-                self.imagined_trajectories["states"]
-            )
-        if isinstance(self.imagined_trajectories["actions"], list):
-            self.imagined_trajectories["actions"] = np.array(
-                self.imagined_trajectories["actions"]
-            )
-        if isinstance(self.imagined_trajectories["rewards"], list):
-            self.imagined_trajectories["rewards"] = np.array(
-                self.imagined_trajectories["rewards"]
-            )
+        # Convert to arrays without modifying the original dictionary structure
+        states_data = self.imagined_trajectories["states"]
+        actions_data = self.imagined_trajectories["actions"]
+        rewards_data = self.imagined_trajectories["rewards"]
+
+        # Convert to numpy arrays with proper handling of tensor data
+        if isinstance(states_data, list):
+            # Convert any tensors in the list to numpy first
+            states_list = []
+            for state in states_data:
+                if torch.is_tensor(state):
+                    states_list.append(state.detach().cpu().numpy())
+                else:
+                    states_list.append(np.array(state))
+            states_data = np.array(states_list, dtype=np.float32)
+
+        if isinstance(actions_data, list):
+            actions_list = []
+            for action in actions_data:
+                if torch.is_tensor(action):
+                    actions_list.append(action.detach().cpu().numpy())
+                else:
+                    actions_list.append(np.array(action))
+            actions_data = np.array(actions_list, dtype=np.float32)
+
+        if isinstance(rewards_data, list):
+            rewards_list = []
+            for reward in rewards_data:
+                if torch.is_tensor(reward):
+                    rewards_list.append(reward.detach().cpu().numpy())
+                else:
+                    rewards_list.append(np.array(reward))
+            rewards_data = np.array(rewards_list, dtype=np.float32)
 
         states = torch.tensor(
-            self.imagined_trajectories["states"], dtype=torch.float32
+            states_data, dtype=torch.float32
         )  # [imag_horizon, batch_size, state_dim]
         actions = torch.tensor(
-            self.imagined_trajectories["actions"], dtype=torch.float32
+            actions_data, dtype=torch.float32
         )  # [imag_horizon, batch_size, action_dim]
-        rewards = torch.tensor(
-            self.imagined_trajectories["rewards"], dtype=torch.float32
-        ).unsqueeze(
+        rewards = torch.tensor(rewards_data, dtype=torch.float32).unsqueeze(
             -1
         )  # [imag_horizon, batch_size, 1]
         return states, actions, rewards
@@ -307,7 +326,9 @@ class ActorCriticTrainer:
 
             states = self.pop_initial_state(self.batch_size)
 
-            states = self.world_model.reset(initial_state=states)
+            states = self.world_model.reset(
+                batch_size=self.batch_size, initial_state=states
+            )
 
             for i in range(self.imag_horizon):
                 states = torch.tensor(states, dtype=torch.float32)
@@ -327,9 +348,11 @@ class ActorCriticTrainer:
                 f"Epoch {epoch}: Actor Loss: {losses['actor_loss']:.4f}, "
                 f"Critic Loss: {losses['critic_loss']:.4f}"
             )
-            # Save models periodically if requested
+            # Save models and evaluate periodically if requested
             if save_frequency and (epoch + 1) % save_frequency == 0:
                 self.save_models(epoch=epoch + 1)
+                # Run intermediate evaluation
+                self.run_intermediate_evaluation(epoch + 1)
 
         # Final training statistics
         print("\n=== Training Complete ===")
@@ -355,9 +378,133 @@ class ActorCriticTrainer:
         final_model_path = self.save_models()
         print(f"Final models saved to: {final_model_path}")
 
+        # Run final evaluation
+        print("\n=== Running Final Evaluation ===")
+        final_eval_episodes = self.config.get("final_eval_episodes", 10)
+        eval_rewards, eval_lengths = self.evaluate(
+            num_episodes=final_eval_episodes, visualize=False
+        )
+
+        # Log final evaluation to TensorBoard
+        final_avg_reward = np.mean(eval_rewards)
+        final_std_reward = np.std(eval_rewards)
+        self.writer.add_scalar(
+            "Evaluation/Final_Avg_Reward", final_avg_reward, num_epochs
+        )
+        self.writer.add_scalar(
+            "Evaluation/Final_Std_Reward", final_std_reward, num_epochs
+        )
+
         self.world_model.close()
 
         return final_model_path
+
+    def run_intermediate_evaluation(self, epoch):
+        """
+        Run evaluation during training and log results to TensorBoard.
+
+        :param epoch: Current training epoch
+        """
+        # Get evaluation parameters from config
+        eval_episodes = self.config.get("eval_episodes", 5)
+        eval_visualize = self.config.get("eval_visualize", False)
+
+        print(f"\n--- Running Intermediate Evaluation at Epoch {epoch} ---")
+
+        # Set agent to evaluation mode
+        original_actor_mode = self.agent.actor.training
+        original_critic_mode = self.agent.critic.training
+        self.agent.actor.eval()
+        self.agent.critic.eval()
+
+        # Store original world model state if it has visualization
+        original_visualize = None
+        if hasattr(self.world_model, "visualize"):
+            original_visualize = self.world_model.visualize
+            # Only set visualization if it's safe to do so
+            if not eval_visualize or hasattr(self.world_model, "_init_visualization"):
+                self.world_model.visualize = eval_visualize
+
+        original_batch_size = self.world_model.batch_size
+
+        try:
+            eval_rewards = []
+            eval_lengths = []
+
+            for episode in range(eval_episodes):
+                state = self.world_model.reset(batch_size=1)
+                terminated = False
+                total_reward = 0
+                step_count = 0
+
+                while not terminated and step_count < 1000:
+                    # Get action (deterministic for evaluation)
+                    state = torch.tensor(state, dtype=torch.float32)
+                    action = self.agent.get_action(state).detach().numpy()
+                    next_state, reward, terminated, info = self.world_model.step(action)
+
+                    state = next_state
+                    # Extract scalar reward from array
+                    reward_scalar = (
+                        reward[0] if isinstance(reward, (list, np.ndarray)) else reward
+                    )
+                    total_reward += reward_scalar
+                    step_count += 1
+
+                    # Check if episode terminated (extract from array if needed)
+                    terminated = (
+                        terminated[0]
+                        if isinstance(terminated, (list, np.ndarray))
+                        else terminated
+                    )
+
+                eval_rewards.append(total_reward)
+                eval_lengths.append(step_count)
+
+            # Calculate statistics
+            avg_reward = np.mean(eval_rewards)
+            std_reward = np.std(eval_rewards)
+            avg_length = np.mean(eval_lengths)
+            best_reward = np.max(eval_rewards)
+            worst_reward = np.min(eval_rewards)
+
+            # Log to TensorBoard
+            self.writer.add_scalar(
+                "Evaluation/Intermediate_Avg_Reward", avg_reward, epoch
+            )
+            self.writer.add_scalar(
+                "Evaluation/Intermediate_Std_Reward", std_reward, epoch
+            )
+            self.writer.add_scalar(
+                "Evaluation/Intermediate_Avg_Length", avg_length, epoch
+            )
+            self.writer.add_scalar(
+                "Evaluation/Intermediate_Best_Reward", best_reward, epoch
+            )
+            self.writer.add_scalar(
+                "Evaluation/Intermediate_Worst_Reward", worst_reward, epoch
+            )
+
+            # Print results
+            print(f"  Evaluation Results (Epoch {epoch}):")
+            print(f"    Episodes: {eval_episodes}")
+            print(f"    Average Reward: {avg_reward:.3f} ± {std_reward:.3f}")
+            print(f"    Average Length: {avg_length:.1f}")
+            print(f"    Best/Worst Reward: {best_reward:.3f} / {worst_reward:.3f}")
+
+        finally:
+            # Restore original modes
+            self.agent.actor.train()
+            self.agent.critic.train()
+
+            # Restore original visualization state
+            if hasattr(self.world_model, "visualize"):
+                self.world_model.visualize = original_visualize
+
+            # Restore original batch size
+            self.world_model.reset(batch_size=original_batch_size)
+
+        print(f"--- Intermediate Evaluation Complete ---\n")
 
     def close_tensorboard(self):
         """Close the TensorBoard writer."""
@@ -374,7 +521,13 @@ class ActorCriticTrainer:
         # Set agent to evaluation mode
         self.agent.actor.eval()
         self.agent.critic.eval()
-        self.world_model.set_visualize(visualize)
+
+        # Set visualization if the world model supports it
+        if hasattr(self.world_model, "visualize"):
+            original_visualize = self.world_model.visualize
+            self.world_model.visualize = visualize
+        else:
+            original_visualize = None
 
         eval_rewards = []
         eval_lengths = []
@@ -392,18 +545,33 @@ class ActorCriticTrainer:
                 next_state, reward, terminated, info = self.world_model.step(action)
 
                 state = next_state
-                total_reward += reward
+                # Extract scalar reward from array
+                reward_scalar = (
+                    reward[0] if isinstance(reward, (list, np.ndarray)) else reward
+                )
+                total_reward += reward_scalar
                 step_count += 1
+
+                # Check if episode terminated (extract from array if needed)
+                terminated = (
+                    terminated[0]
+                    if isinstance(terminated, (list, np.ndarray))
+                    else terminated
+                )
 
             eval_rewards.append(total_reward)
             eval_lengths.append(step_count)
             print(
-                f"Eval Episode {episode+1}: Reward: {total_reward[0]:.2f}, Steps: {step_count}"
+                f"Eval Episode {episode+1}: Reward: {total_reward:.2f}, Steps: {step_count}"
             )
 
         # Set agent back to training mode
         self.agent.actor.train()
         self.agent.critic.train()
+
+        # Restore original visualization setting
+        if original_visualize is not None and hasattr(self.world_model, "visualize"):
+            self.world_model.visualize = original_visualize
 
         # Calculate evaluation statistics
         eval_avg_reward = np.mean(eval_rewards)
@@ -423,8 +591,6 @@ class ActorCriticTrainer:
             self.writer.add_scalar("Evaluation/Std_Length", eval_std_length, 0)
             self.writer.add_scalar("Evaluation/Best_Reward", np.max(eval_rewards), 0)
             self.writer.add_scalar("Evaluation/Worst_Reward", np.min(eval_rewards), 0)
-
-        self.world_model.close()
 
         return eval_rewards, eval_lengths
 

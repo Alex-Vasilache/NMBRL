@@ -136,65 +136,57 @@ class ActorCriticAgent(BaseAgent):
             torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 0
         ).detach()
 
-        with tools.RequiresGrad(self.critic):
+        value_dists = self.critic(states.detach())
+        values = value_dists.mode()
 
-            value_dists = self.critic(states.detach())
-            values = value_dists.mode()
+        lambda_returns = [0] * sequence_length
+        lambda_returns[-1] = values[-1]
 
-            lambda_returns = [0] * sequence_length
-            lambda_returns[-1] = values[-1]
+        for i in range(sequence_length - 2, -1, -1):
+            lambda_returns[i] = rewards[i] + self.config["gamma"] * (
+                (1 - self.config["discount_lambda"]) * values[i]
+                + self.config["discount_lambda"] * lambda_returns[i + 1]
+            )
 
-            for i in range(sequence_length - 2, -1, -1):
-                lambda_returns[i] = rewards[i] + self.config["gamma"] * (
-                    (1 - self.config["discount_lambda"]) * values[i]
-                    + self.config["discount_lambda"] * lambda_returns[i + 1]
-                )
+        lambda_returns = torch.stack(lambda_returns)  # [sequence_length, batch_size, 1]
 
-            lambda_returns = torch.stack(
-                lambda_returns
-            )  # [sequence_length, batch_size, 1]
+        # These targets train the critic
+        critic_losses = -value_dists.log_prob(
+            lambda_returns.detach()
+        )  # [sequence_length, batch_size]
 
-            # These targets train the critic
-            critic_losses = -value_dists.log_prob(
-                lambda_returns.detach()
-            )  # [sequence_length, batch_size]
-
+        if self.config["critic"]["slow_target"]:
             slow_target = self._slow_value(states.detach())
-            if self.config["critic"]["slow_target"]:
-                critic_losses -= value_dists.log_prob(slow_target.mode().detach())
+            critic_losses -= value_dists.log_prob(slow_target.mode().detach())
 
-            critic_losses = critic_losses.unsqueeze(
-                -1
-            )  # [sequence_length, batch_size, 1]
-            critic_loss = torch.mean(critic_losses[:-1] * weights[:-1])
+        critic_losses = critic_losses.unsqueeze(-1)  # [sequence_length, batch_size, 1]
+        critic_loss = torch.mean(critic_losses[:-1] * weights[:-1])
 
-        with tools.RequiresGrad(self.actor):
+        if self.config["reward_EMA"]:
+            offset, scale = self.reward_ema(lambda_returns[:-1], self.ema_vals)
+            normed_target = (lambda_returns[:-1] - offset) / scale
+            normed_base = (values[:-1] - offset) / scale
+            advantages = (normed_target - normed_base).detach()
+        else:
+            advantages = (lambda_returns[:-1] - values[:-1]).detach()
 
-            if self.config["reward_EMA"]:
-                offset, scale = self.reward_ema(lambda_returns[:-1], self.ema_vals)
-                normed_target = (lambda_returns[:-1] - offset) / scale
-                normed_base = (values[:-1] - offset) / scale
-                advantages = (normed_target - normed_base).detach()
-            else:
-                advantages = (lambda_returns[:-1] - values[:-1]).detach()
+        # Compute log probs
+        policy_dists = self.actor(states.detach())
+        log_probs = policy_dists.log_prob(actions)[
+            :-1
+        ]  # [sequence_length - 1, batch_size]
 
-            # Compute log probs
-            policy_dists = self.actor(states.detach())
-            log_probs = policy_dists.log_prob(actions)[
-                :-1
-            ]  # [sequence_length - 1, batch_size]
+        log_probs = log_probs.unsqueeze(-1)  # [sequence_length - 1, batch_size, 1]
 
-            log_probs = log_probs.unsqueeze(-1)  # [sequence_length - 1, batch_size, 1]
+        # Compute entropy
+        entropy_loss = (
+            policy_dists.entropy()[:-1] * float(self.config["actor"]["entropy"])
+        ).unsqueeze(
+            -1
+        )  # [sequence_length - 1, batch_size, 1]
 
-            # Compute entropy
-            entropy_loss = (
-                policy_dists.entropy()[:-1] * float(self.config["actor"]["entropy"])
-            ).unsqueeze(
-                -1
-            )  # [sequence_length - 1, batch_size, 1]
-
-            actor_loss = -(advantages * log_probs * weights[:-1] + entropy_loss)
-            actor_loss = torch.mean(actor_loss)
+        actor_loss = -(advantages * log_probs * weights[:-1] + entropy_loss)
+        actor_loss = torch.mean(actor_loss)
 
         self._actor_opt(actor_loss, self.actor.parameters())
         self._value_opt(critic_loss, self.critic.parameters())
