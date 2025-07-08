@@ -144,7 +144,7 @@ class ActorCriticAgent(BaseAgent):
 
         for i in range(sequence_length - 2, -1, -1):
             lambda_returns[i] = rewards[i] + self.config["gamma"] * (
-                (1 - self.config["discount_lambda"]) * values[i]
+                (1 - self.config["discount_lambda"]) * values[i + 1]
                 + self.config["discount_lambda"] * lambda_returns[i + 1]
             )
 

@@ -112,10 +112,10 @@ The project can be broken down into the following phases and tasks. This structu
 | **1. Foundation**          | T1.1    |   ✅    | **Create Project Structure:** Set up the directory and `__init__.py` files as outlined above.                                                                                                           | `Neuromorphic_MBRL/`                     | -                               |
 |                            | T1.2    |   ✅    | **Define Base Interfaces:** Create the abstract base classes `BaseWorldModel` and `BaseAgent`.                                                                                                          | `base_world_model.py`, `base_agent.py`   | T1.1                            |
 |                            | T1.3    |   ✅    | **Implement Environment Wrapper:** Create a concrete `WorldModel` by wrapping the existing `CartPole` simulation. This allows agent development to begin immediately.                                   | `ini_cartpole_wrapper.py`                | T1.2                            |
-| **2. Actor-Critic Module** | T2.1    |   -    | **Initial SNN Actor-Critic Agent:** Implement an `SnnActorCriticAgent` class with a basic SNN structure.                                                                                                | `snn_actor_critic_agent.py`              | T1.2                            |
-|                            | T2.2    |   -    | **Actor-Critic Trainer:** Create the training loop that has the agent interact with the `WorldModel` interface (using the `EnvironmentWrapper` for now).                                                | `actor_critic_trainer.py`, `run_mbrl.py` | T1.3, T2.1                      |
+| **2. Actor-Critic Module** | T2.1    |   ✅    | **Initial Actor-Critic Agent:** Implement an `ActorCriticAgent` class structure.                                                                                                                        | `actor_critic_agent.py`                  | T1.2                            |
+|                            | T2.2    |   ✅    | **Actor-Critic Trainer:** Create the training loop that has the agent interact with the `WorldModel` interface (using the `EnvironmentWrapper` for now).                                                | `actor_critic_trainer.py`, `run_mbrl.py` | T1.3, T2.1                      |
 |                            | (T2.3)  |   -    | (**Implement Sparse RTRL:**) Adapt the `ActorCriticTrainer` to use a sparse RTRL algorithm for updating the SNN agent.                                                                                  | `actor_critic_trainer.py`                | T2.2                            |
-| **3. World Model Module**  | T3.1    |   -    | **SNN World Model:** Implement the `SNNWorldModel` class. Initially, this can be a simple recurrent SNN architecture.                                                                                   | `snn_world_model.py`                     | T1.2                            |
+| **3. World Model Module**  | T3.1    |   -    | **World Model:** Implement the `SNNWorldModel` class. Initially, this can be a simple recurrent SNN architecture.                                                                                       | `snn_world_model.py`                     | T1.2                            |
 |                            | T3.2    |   -    | **World Model Trainer:** Implement the training loop for the `SNNWorldModel`. It should sample data from the real environment and train the SNN to predict `(s', r) = f(s, a)`.                         | `world_model_trainer.py`                 | `ini_cartpole_wrapper.py`, T3.1 |
 | **4. Integration**         | T4.1    |   -    | **Full Pipeline Integration:** Update `run_mbrl.py` to run both training modules. The `ActorCriticTrainer` should be configured to use the trained `SNNWorldModel` instead of the `EnvironmentWrapper`. | `run_mbrl.py`                            | T2.3, T3.2                      |
 |                            | T4.2    |   -    | **Parallel Execution:** Refactor the training loops to run concurrently, with the agent training on the latest version of the world model.                                                              | `run_mbrl.py`, `*_trainer.py`            | T4.1                            |
@@ -218,44 +218,54 @@ where $(\hat{s}_{t+1}, \hat{r}_{t+1})$ are the predictions from the world model 
 
 #### Critic (Value) Loss
 
-The critic, $V_\psi(s_t)$, learns to estimate the expected future rewards from a given state. It is trained on trajectories imagined by the world model. For each state $s_\tau$ in an imagined trajectory, the critic's goal is to predict the sum of future rewards over a certain horizon $H$, known as the value target $v_\tau$.
+The critic, $V_\psi(s_t)$, learns a distributional estimate of the expected future rewards. Instead of predicting a single value, it outputs a probability distribution over a set of possible values, which helps capture uncertainty. It is trained on trajectories imagined by the world model.
 
-The value target is the discounted sum of rewards in the imagined trajectory:
-$$
-v_{\tau} = \sum_{k=\tau}^{\tau+H} \gamma^{k-\tau} r_k
-$$
-where $r_k$ are the rewards predicted by the world model and $\gamma$ is a discount factor.
-
-The critic is then updated by minimizing the MSE between its predictions $V_\psi(s_\tau)$ and these calculated value targets:
+The target for the critic is the $\lambda$-return ($v^\lambda$), which is a temporal-difference-based estimate of the value function that reduces bias. It is calculated recursively backwards in time for each step $t$ in an imagined trajectory of length $H$:
 
 $$
-L_{Critic}(\psi) = \mathbb{E}_{s_\tau \sim p_\theta} \left[ \| V_{\psi}(s_\tau) - \mathrm{stop\_grad}(v_\tau) \|^2 \right]
+v_t^\lambda = r_t + \gamma \left( (1 - \lambda) V_\psi(s_{t+1}) + \lambda v_{t+1}^\lambda \right), \quad \text{with} \quad v_H^\lambda = V_\psi(s_H)
 $$
 
-The expectation $\mathbb{E}_{s_\tau \sim p_\theta}$ means we average this loss over all states in many imagined trajectories. The `stop_grad` function is crucial: it prevents the value targets (which depend on the world model's predictions) from propagating gradients back into the world model during the agent's training phase.
+where $r_t$ is the reward at step $t$, $\gamma$ is the discount factor, $\lambda$ is the GAE parameter, and $V_\psi(s_t)$ is the mode of the critic's predicted distribution for state $s_t$.
+
+The critic is then updated by maximizing the log-probability of these target values under the predicted distribution. The loss is the negative log-likelihood:
+$$
+L_{Critic}(\psi) = - \mathbb{E}_{s_t \sim p_\theta} \left[ \log p_{V_\psi(s_t)} \left( \mathrm{stop\_grad}(v_t^\lambda) \right) \right]
+$$
+
+The expectation $\mathbb{E}_{s_t \sim p_\theta}$ means we average this loss over all states in many imagined trajectories. The `stop_grad` function prevents the targets from propagating gradients into the critic's parameters. Optionally, a slow-moving average of the critic's weights (a "slow target") can be used to further stabilize training.
 
 #### Actor (Policy) Loss
 
-The actor (policy), $\pi_\phi(a_t | s_t)$, is updated to choose actions that lead to states with higher values as estimated by the critic. The actor's objective is to maximize the expected value of states it visits within the imagination.
+The actor (policy), $\pi_\phi(a_t | s_t)$, is updated using a policy gradient method to choose actions that lead to higher returns. The loss is composed of two parts: a policy gradient term and an entropy bonus to encourage exploration.
 
-This is achieved by performing gradient ascent on the value estimates. Equivalently, we can define the loss as the negative of the critic's value predictions, encouraging the actor to move towards states the critic deems more valuable:
+First, an advantage estimate, $A_t$, is calculated, which represents how much better the observed $\lambda$-return is compared to the critic's baseline estimate:
+
 $$
-L_{Actor}(\phi) = - \mathbb{E}_{s_\tau \sim p_\theta} \left[ V_{\psi}(s_\tau) \right]
+A_t = v_t^\lambda - V_\psi(s_t)
 $$
-This loss encourages the policy $\pi_\phi$ to select action sequences that produce trajectories with high cumulative reward, as judged by the learned world model and value function. The actor is not trained on the value targets $v_\tau$ directly, but rather on the critic's learned, smooth approximation of them, $V_\psi$.
 
-### 6.5 SNN-Specific Considerations
+The policy gradient component of the loss encourages actions that have a positive advantage. This is the standard REINFORCE-style update rule:
 
-A crucial point to consider when using Spiking Neural Networks (SNNs) for the world model, actor, and critic is their stateful nature, which requires a different training approach compared to traditional, stateless Artificial Neural Networks (ANNs).
+$$
+L_{PG}(\phi) = - \mathbb{E}_{s_t \sim p_\theta, a_t \sim \pi_\phi} \left[ \mathrm{stop\_grad}(A_t) \log \pi_\phi(a_t|s_t) \right]
+$$
 
-#### Temporal Dynamics and Trajectory Length
+To encourage exploration and prevent the policy from becoming too deterministic too quickly, an entropy bonus is added to the objective. The goal is to maximize the policy's entropy $H$. The corresponding loss term is:
 
-The core of the issue lies in the fact that each neuron in an SNN maintains an internal state (e.g., its membrane potential) that evolves over time. Consequently:
+$$
+L_{Entropy}(\phi) = - \eta H(\pi_\phi(\cdot|s_t))
+$$
 
-*   **Need for Sequential Data:** An SNN cannot produce a meaningful output from a single, isolated input state. It needs a sequence of inputs over time for its internal dynamics to converge and represent information effectively. This means that during the "dreaming" phase, we cannot simply use random, disconnected state-action pairs from a replay buffer.
-*   **Continuous Trajectories:** The training process must use **continuous, long trajectories** of imagined experience. This allows the hidden states of the SNN world model to evolve naturally from one step to the next. The same principle applies to the SNN actor and critic, which must also process these state sequences to produce stable actions and value estimates.
+where $\eta$ is a coefficient controlling the strength of the entropy regularization. The final actor loss is the sum of these two components:
 
-This requirement contrasts with many traditional MBRL implementations where the collected experience `(s, a, s', r)` can be stored in a replay buffer and sampled randomly for training. For our SNN-based approach, the *sequence* of experience is just as important as the individual data points. The training loops (`ActorCriticTrainer` and `WorldModelTrainer`) must be designed to generate and train on these unbroken, sequential rollouts from the world model.
+$$
+L_{Actor}(\phi) = L_{PG}(\phi) + L_{Entropy}(\phi)
+$$
+This loss encourages the policy $\pi_\phi$ to select action sequences that produce trajectories with high cumulative reward, as judged by the learned world model and value function.
+
+
+
 
 ## 7. Usage and Monitoring
 

@@ -85,6 +85,9 @@ class ActorCriticTrainer:
         print(f"TensorBoard logs will be saved to: {self.tb_log_dir}")
         print(f"To view logs, run: tensorboard --logdir {self.log_dir}")
 
+        # Save configuration files to log directory for reproducibility
+        self.save_config_to_logdir()
+
         # Log hyperparameters to TensorBoard
         hparam_dict = {
             "learning_rate": float(config.get("learning_rate")),
@@ -660,6 +663,41 @@ class ActorCriticTrainer:
             self.writer.add_scalar("Evaluation/Worst_Reward", np.min(eval_rewards), 0)
 
         return eval_rewards, eval_lengths
+
+    def save_config_to_logdir(self):
+        """Save the training configuration YAML file to the TensorBoard log directory."""
+        # Save the actual config used for training
+        config_path = os.path.join(self.tb_log_dir, "training_config.yaml")
+
+        # Add training metadata
+        config_with_metadata = {
+            "training_metadata": {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "log_directory": self.tb_log_dir,
+                "save_directory": self.save_dir,
+            },
+            "training_config": self.config,
+        }
+
+        with open(config_path, "w") as f:
+            yaml.dump(config_with_metadata, f, default_flow_style=False, indent=2)
+        print(f"Training configuration saved to: {config_path}")
+
+        # Also save a copy of the original config file if we can find it
+        original_config_files = [
+            "configs/actor_critic_config.yaml",
+            "actor_critic_config.yaml",
+        ]
+        for original_path in original_config_files:
+            if os.path.exists(original_path):
+                import shutil
+
+                original_copy_path = os.path.join(
+                    self.tb_log_dir, "original_config.yaml"
+                )
+                shutil.copy2(original_path, original_copy_path)
+                print(f"Original config file copied to: {original_copy_path}")
+                break
 
 
 if __name__ == "__main__":
