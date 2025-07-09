@@ -61,21 +61,23 @@ class MLP(nn.Module):
         if isinstance(self._shape, dict):
             self.mean_layer = nn.ModuleDict()
             for name, shape in self._shape.items():
-                self.mean_layer[name] = nn.Linear(inp_dim, np.prod(shape))
+                self.mean_layer[name] = nn.Linear(inp_dim, int(np.prod(shape)))
             self.mean_layer.apply(tools.uniform_weight_init(outscale))
             if self._std == "learned":
                 assert dist in ("tanh_normal", "normal", "trunc_normal", "huber"), dist
                 self.std_layer = nn.ModuleDict()
                 for name, shape in self._shape.items():
-                    self.std_layer[name] = nn.Linear(inp_dim, np.prod(shape))
+                    self.std_layer[name] = nn.Linear(inp_dim, int(np.prod(shape)))
                 self.std_layer.apply(tools.uniform_weight_init(outscale))
         elif self._shape is not None:
-            self.mean_layer = nn.Linear(inp_dim, np.prod(self._shape))
+            self.mean_layer = nn.Linear(inp_dim, int(np.prod(self._shape)))
             self.mean_layer.apply(tools.uniform_weight_init(outscale))
             if self._std == "learned":
                 assert dist in ("tanh_normal", "normal", "trunc_normal", "huber"), dist
-                self.std_layer = nn.Linear(units, np.prod(self._shape))
+                self.std_layer = nn.Linear(units, int(np.prod(self._shape)))
                 self.std_layer.apply(tools.uniform_weight_init(outscale))
+
+        self.to(device)
 
     def forward(self, features, dtype=None):
         x = features
@@ -142,10 +144,10 @@ class MLP(nn.Module):
         elif dist == "huber":
             dist = tools.ContDist(
                 torchd.independent.Independent(
-                    tools.UnnormalizedHuber(mean, std, 1.0),
+                    tools.UnnormalizedHuber(mean, std, 1),
                     len(shape),
-                    absmax=self._absmax,
-                )
+                ),
+                absmax=self._absmax,
             )
         elif dist == "binary":
             dist = tools.Bernoulli(

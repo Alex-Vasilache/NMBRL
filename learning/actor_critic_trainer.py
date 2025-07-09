@@ -137,11 +137,13 @@ class ActorCriticTrainer:
 
         for _ in range(num_states // self.config.get("batch_size") // 2):
 
-            state = torch.tensor(state, dtype=torch.float32)
-            actions = self.agent.get_action(state).detach().numpy()
+            state = torch.tensor(
+                state, dtype=torch.float32, device=self.config["device"]
+            )
+            actions = self.agent.get_action(state).cpu().detach().numpy()
 
             next_states, _, _, _ = self.world_model.step(actions)
-            sequential_states.extend(state)
+            sequential_states.extend(state.cpu().numpy())
             state = next_states
 
         # Shuffle the sequential states
@@ -155,9 +157,11 @@ class ActorCriticTrainer:
         reward,
     ):
         """Store experience in the buffer."""
-        self.imagined_trajectories["states"].append(state.detach().numpy())  # s at [t]
+        self.imagined_trajectories["states"].append(
+            state.cpu().detach().numpy()
+        )  # s at [t]
         self.imagined_trajectories["actions"].append(
-            action.detach().numpy()
+            action.cpu().detach().numpy()
         )  # a at [t]
         self.imagined_trajectories["rewards"].append(reward)  # r at [t]
 
@@ -182,7 +186,7 @@ class ActorCriticTrainer:
             states_list = []
             for state in states_data:
                 if torch.is_tensor(state):
-                    states_list.append(state.detach().cpu().numpy())
+                    states_list.append(state.cpu().detach().numpy())
                 else:
                     states_list.append(np.array(state))
             states_data = np.array(states_list, dtype=np.float32)
@@ -191,7 +195,7 @@ class ActorCriticTrainer:
             actions_list = []
             for action in actions_data:
                 if torch.is_tensor(action):
-                    actions_list.append(action.detach().cpu().numpy())
+                    actions_list.append(action.cpu().detach().numpy())
                 else:
                     actions_list.append(np.array(action))
             actions_data = np.array(actions_list, dtype=np.float32)
@@ -200,18 +204,20 @@ class ActorCriticTrainer:
             rewards_list = []
             for reward in rewards_data:
                 if torch.is_tensor(reward):
-                    rewards_list.append(reward.detach().cpu().numpy())
+                    rewards_list.append(reward.cpu().detach().numpy())
                 else:
                     rewards_list.append(np.array(reward))
             rewards_data = np.array(rewards_list, dtype=np.float32)
 
         states = torch.tensor(
-            states_data, dtype=torch.float32
+            states_data, dtype=torch.float32, device=self.config["device"]
         )  # [imag_horizon, batch_size, state_dim]
         actions = torch.tensor(
-            actions_data, dtype=torch.float32
+            actions_data, dtype=torch.float32, device=self.config["device"]
         )  # [imag_horizon, batch_size, action_dim]
-        rewards = torch.tensor(rewards_data, dtype=torch.float32).unsqueeze(
+        rewards = torch.tensor(
+            rewards_data, dtype=torch.float32, device=self.config["device"]
+        ).unsqueeze(
             -1
         )  # [imag_horizon, batch_size, 1]
         return states, actions, rewards
@@ -354,8 +360,17 @@ class ActorCriticTrainer:
         return_value = self.initial_state_buffer[:batch_size]
         self.initial_state_buffer = self.initial_state_buffer[batch_size:]
         # Convert to numpy array first to avoid tensor creation warning
-        return_value = np.array(return_value)
-        return_value = torch.tensor(return_value, dtype=torch.float32)
+        if isinstance(return_value, list):
+            if not isinstance(return_value[0], torch.Tensor):
+                return_value = np.array(return_value)
+                return_value = torch.tensor(
+                    return_value, dtype=torch.float32, device=self.config["device"]
+                )
+            else:
+                return_value = torch.stack(return_value).to(
+                    dtype=torch.float32, device=self.config["device"]
+                )
+
         return return_value
 
     def train(self):
@@ -378,10 +393,12 @@ class ActorCriticTrainer:
             )
 
             for i in range(self.imag_horizon):
-                states = torch.tensor(states, dtype=torch.float32)
+                states = torch.tensor(
+                    states, dtype=torch.float32, device=self.config["device"]
+                )
                 actions = self.agent.get_action(states)
                 next_states, rewards, terminated, info = self.world_model.step(
-                    actions.detach().numpy()
+                    actions.cpu().detach().numpy()
                 )
                 self.store_trajectory(
                     states,
@@ -514,8 +531,10 @@ class ActorCriticTrainer:
 
                 while not terminated and step_count < 1000:
                     # Get action (deterministic for evaluation)
-                    state = torch.tensor(state, dtype=torch.float32)
-                    action = self.agent.get_action(state).detach().numpy()
+                    state = torch.tensor(
+                        state, dtype=torch.float32, device=self.config["device"]
+                    )
+                    action = self.agent.get_action(state).cpu().detach().numpy()
                     next_state, reward, terminated, info = self.world_model.step(action)
 
                     state = next_state
@@ -615,8 +634,10 @@ class ActorCriticTrainer:
 
             while not terminated and step_count < 1000:
                 # Get action (deterministic for evaluation)
-                state = torch.tensor(state, dtype=torch.float32)
-                action = self.agent.get_action(state).detach().numpy()
+                state = torch.tensor(
+                    state, dtype=torch.float32, device=self.config["device"]
+                )
+                action = self.agent.get_action(state).cpu().detach().numpy()
                 next_state, reward, terminated, info = self.world_model.step(action)
 
                 state = next_state

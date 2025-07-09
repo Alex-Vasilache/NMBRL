@@ -100,7 +100,12 @@ class ActorCriticAgent(BaseAgent):
         """
         # Ensure state is a tensor
         if isinstance(state, np.ndarray) or isinstance(state, list):
-            state = torch.tensor(state, dtype=torch.float32)
+            state = torch.tensor(
+                state, dtype=torch.float32, device=self.config["device"]
+            )
+        else:
+            # ensure it is on device
+            state = state.to(self.config["device"])
         return self.actor(state).sample()
 
     def _update_slow_target(self):
@@ -209,7 +214,7 @@ class ActorCriticAgent(BaseAgent):
         mean_entropy = torch.mean(policy_dists.entropy()[:-1])
 
         # Calculate slow target loss separately if enabled
-        slow_target_loss = torch.tensor(0.0)
+        slow_target_loss = torch.tensor(0.0, device=self.config["device"])
         if self.config["critic"]["slow_target"]:
             # Use the same loss calculation as the main critic loss but for slow target
             slow_target_log_prob = -value_dists.log_prob(slow_target.mode().detach())

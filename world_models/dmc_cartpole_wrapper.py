@@ -234,6 +234,8 @@ class DMCCartPoleWrapper(BaseWorldModel):
             self._create_environments(batch_size)
 
         if initial_state is not None:
+            if hasattr(initial_state, "cpu"):
+                initial_state = initial_state.cpu().numpy()
             if initial_state.shape[0] != self.batch_size:
                 raise ValueError(
                     "initial_state batch size must match environment batch size."
