@@ -1,37 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+from tqdm import tqdm
+import joblib
 
 from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
 from world_models.world_model_v1 import SimpleModel
-
-env = GymlikeCartpoleWrapper(seed=42, n_envs=1)
-
-num_samples = 50000
-
-state = env.reset()
-print(state)
-
-inp_data = np.zeros((num_samples, 6))
-outp_data = np.zeros((num_samples, 6))
-
-print(dir(env.action_space))
-for i in range(num_samples):
-    action = np.random.uniform(
-        low=env.action_space.low, high=env.action_space.high, size=(1,)
-    )
-    inp_data[i, :5] = state
-    inp_data[i, 5] = action[0]
-    next_state, reward, terminated, info = env.step(action)
-    outp_data[i, :5] = next_state
-    # print(type(reward))
-    outp_data[i, 5] = reward[0]  # if not np.any(np.isnan(reward)) else 0.
-    # print(state, action, next_state, reward)
-    state = np.copy(next_state)
-
-print(np.min(outp_data, axis=0))
-print(np.max(outp_data, axis=0))
-
 
 import torch
 import torch.nn as nn
@@ -111,7 +85,7 @@ def train_model(
             epoch_train_loss += loss.item() * inputs.size(0)  # Accumulate loss
 
         # Average training loss for the epoch
-        epoch_train_loss /= len(train_loader.dataset)
+        epoch_train_loss /= len(X_train)
         train_losses.append(epoch_train_loss)
 
         # Validation loss computation
@@ -125,7 +99,7 @@ def train_model(
                 epoch_val_loss += loss.item() * inputs.size(0)
 
         # Average validation loss for the epoch
-        epoch_val_loss /= len(val_loader.dataset)
+        epoch_val_loss /= len(X_val)
 
         scheduler.step(epoch_val_loss)
 
@@ -138,33 +112,108 @@ def train_model(
     return train_losses, val_losses, val_dataset
 
 
-model = SimpleModel(
-    input_dim=inp_data.shape[1], hidden_dim=1000, output_dim=outp_data.shape[1]
-)
+def main():
+    """Main function to train the world model."""
+    env = GymlikeCartpoleWrapper(seed=42, n_envs=1)
+
+    num_samples = 50000
+
+    state = env.reset()
+    batch_size, state_size = state.shape
+
+    inp_data = np.zeros((num_samples, state_size + 1))
+    outp_data = np.zeros((num_samples, state_size + 1))
+
+    if os.path.exists("cartpole_dataset.npz"):
+        data = np.load("cartpole_dataset.npz")
+        inp_data = data["inputs"]
+        outp_data = data["outputs"]
+        print("Loaded dataset from file")
+    else:
+        print("No dataset found, generating new dataset")
+
+    print(dir(env.action_space))
+    for i in tqdm(range(num_samples)):
+        action = np.array(
+            np.random.uniform(
+                low=env.action_space.low, high=env.action_space.high, size=(1, 1)
+            ),
+            dtype=env.action_space.dtype,
+        )
+        inp_data[i, :state_size] = state[0]
+        inp_data[i, state_size] = action[0, 0]
+        next_state, reward, terminated, info = env.step(action)
+        outp_data[i, :state_size] = next_state[0]
+        outp_data[i, state_size] = reward[0]
+        state = np.copy(next_state)
+
+    print(np.min(outp_data, axis=0))
+    print(np.max(outp_data, axis=0))
+
+    # Scale the data to normalize inputs and outputs
+    from sklearn.preprocessing import StandardScaler
+
+    if os.path.exists("cartpole_input_scaler.joblib") and os.path.exists(
+        "cartpole_output_scaler.joblib"
+    ):
+        scaler_input = joblib.load("cartpole_input_scaler.joblib")
+        scaler_output = joblib.load("cartpole_output_scaler.joblib")
+        print("Loaded scalers from file")
+    else:
+        scaler_input = StandardScaler()
+        scaler_output = StandardScaler()
+
+        inp_data_scaled = scaler_input.fit_transform(inp_data)
+        outp_data_scaled = scaler_output.fit_transform(outp_data)
+
+        print("Data scaling completed")
+        print(
+            f"Input data - Min: {np.min(inp_data_scaled, axis=0)}, Max: {np.max(inp_data_scaled, axis=0)}"
+        )
+        print(
+            f"Output data - Min: {np.min(outp_data_scaled, axis=0)}, Max: {np.max(outp_data_scaled, axis=0)}"
+        )
+
+        # Save the dataset
+        np.savez(
+            "cartpole_dataset.npz", inputs=inp_data_scaled, outputs=outp_data_scaled
+        )
+
+        # Save the scalers
+        joblib.dump(scaler_input, "cartpole_input_scaler.joblib")
+        joblib.dump(scaler_output, "cartpole_output_scaler.joblib")
+
+    print(f"Dataset saved with {num_samples} samples")
+
+    model = SimpleModel(
+        input_dim=inp_data.shape[1], hidden_dim=1000, output_dim=outp_data.shape[1]
+    )
+
+    # Train the model
+    num_examples = 50000
+    train_losses, val_losses, val_dataset = train_model(
+        model,
+        (inp_data[:num_examples, :], outp_data[:num_examples, :]),
+        batch_size=512,
+        num_epochs=200,
+        learning_rate=0.001,
+    )
+
+    X_test, y_test = val_dataset.tensors
+
+    y_hat = model(X_test)
+
+    pred_error = y_test - y_hat
+
+    abs_errs = np.abs(pred_error.detach().numpy())
+    abs_vals = np.abs(y_test.detach().numpy())
+    rel_err = np.mean(np.divide(abs_errs, abs_vals), axis=0)
+
+    value_range = np.abs(np.max(outp_data, axis=0) - np.min(outp_data, axis=0))
+    plt.plot(np.divide(np.mean(abs_errs, axis=0), value_range))
+
+    torch.save(model, "cartpole_world_model.pth")
 
 
-# Train the model
-num_examples = 50000
-train_losses, val_losses, val_dataset = train_model(
-    model,
-    (inp_data[:num_examples, :], outp_data[:num_examples, :]),
-    batch_size=512,
-    num_epochs=200,
-    learning_rate=0.001,
-)
-
-
-X_test, y_test = val_dataset.tensors
-
-y_hat = model(X_test)
-
-pred_error = y_test - y_hat
-
-abs_errs = np.abs(pred_error.detach().numpy())
-abs_vals = np.abs(y_test.detach().numpy())
-rel_err = np.mean(np.divide(abs_errs, abs_vals), axis=0)
-
-value_range = np.abs(np.max(outp_data, axis=0) - np.min(outp_data, axis=0))
-plt.plot(np.divide(np.mean(abs_errs, axis=0), value_range))
-
-torch.save(model, "cartpole_world_model.pth")
+if __name__ == "__main__":
+    main()

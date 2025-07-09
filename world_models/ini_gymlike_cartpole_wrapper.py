@@ -49,6 +49,8 @@ class GymlikeCartpoleWrapper(VecNormalize):
 
         # Create the vectorized environment first
         vec_env = SubprocVecEnv([make_env for _ in range(self.n_envs)])
+        print(vec_env.observation_space)
+        print(vec_env.action_space)
 
         # Initialize the parent VecNormalize class
         super().__init__(
