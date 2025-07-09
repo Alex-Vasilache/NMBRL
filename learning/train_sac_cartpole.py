@@ -23,11 +23,13 @@ from stable_baselines3.common.callbacks import (
 
 SEED = 42
 N_ENVS = 16
-TOTAL_TIMESTEPS = 200_000
+TOTAL_TIMESTEPS = 500_000
 
-NET_ARCH = [32, 32]
-BATCH_SIZE = 256
+NET_ARCH = [128, 128]
+BATCH_SIZE = 64
 INITIAL_LR = 3e-4
+
+MAX_EPISODE_STEPS = 500
 
 
 def main():
@@ -57,7 +59,9 @@ def main():
     set_random_seed(SEED)
 
     # ─── 2) ENV FACTORY ───────────────────────────────────────────────────────────
-    train_env = GymlikeCartpoleWrapper(seed=SEED, n_envs=N_ENVS)
+    train_env = GymlikeCartpoleWrapper(
+        seed=SEED, n_envs=N_ENVS, max_episode_steps=MAX_EPISODE_STEPS
+    )
 
     # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
     def linear_schedule(initial_value: float) -> Callable[[float], float]:
@@ -91,17 +95,19 @@ def main():
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
-    eval_env = GymlikeCartpoleWrapper(seed=SEED, n_envs=1)
+    eval_env = GymlikeCartpoleWrapper(
+        seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS
+    )
 
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=os.path.join(LOG_DIR, "best_model"),
         log_path=os.path.join(LOG_DIR, "eval_logs"),
-        eval_freq=5_000,
+        eval_freq=1_000,
         deterministic=True,
     )
     checkpoint_callback = CheckpointCallback(
-        save_freq=10_000,
+        save_freq=1_000,
         save_path=os.path.join(LOG_DIR, "checkpoints"),
         name_prefix="sac_cp",
     )
