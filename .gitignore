@@ -17,4 +17,5 @@ eggs/
 *.pth
 *.tfevents.*
 runs*
-world_models/trained/cartpole_dataset.npz
+*.npz
+*.joblib

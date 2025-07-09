@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 import copy
 
 save_folder = "world_models/trained"
-USE_SCALERS = False
+USE_SCALERS = True
 
 
 def train_model(
@@ -69,10 +69,11 @@ def train_model(
 
     # Define loss function and optimizer
     criterion = nn.MSELoss()  # Mean Squared Error Loss for regression tasks
+    classification_criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, "min", patience=5, factor=0.5
+        optimizer, "min", patience=5, factor=0.3
     )
 
     train_losses = []
@@ -89,7 +90,14 @@ def train_model(
         for inputs, targets in train_loader:
             optimizer.zero_grad()  # Zero the gradients
             outputs = model(inputs)  # Forward pass
-            loss = criterion(outputs, targets)  # Compute loss
+            reg_loss = criterion(outputs[:, -1], targets[:, -1])  # Compute loss
+            classification_loss = classification_criterion(
+                outputs[:, -1], targets[:, -1]
+            )
+            reg_weight = outputs.shape[1] - 1
+            clf_weight = 1
+
+            loss = reg_weight * reg_loss + clf_weight * classification_loss
             loss.backward()  # Backward pass
             optimizer.step()  # Update weights
 
@@ -106,7 +114,13 @@ def train_model(
         with torch.no_grad():  # No gradient computation during validation
             for inputs, targets in val_loader:
                 outputs = model(inputs)
-                loss = criterion(outputs, targets)
+                reg_loss = criterion(outputs[:, -1], targets[:, -1])  # Compute loss
+                classification_loss = classification_criterion(
+                    outputs[:, -1], targets[:, -1]
+                )
+                reg_weight = outputs.shape[1] - 1
+                clf_weight = 1
+                loss = reg_weight * reg_loss + clf_weight * classification_loss
                 epoch_val_loss += loss.item() * inputs.size(0)
 
         # Average validation loss for the epoch
@@ -148,33 +162,81 @@ def main():
         from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
         from gymnasium.spaces import Box
 
-        env = GymlikeCartpoleWrapper(seed=42, n_envs=1)
-        num_samples = 50000
+        env = GymlikeCartpoleWrapper(seed=42, n_envs=16)
+        num_samples = 5000
 
         state = env.reset()
         batch_size, state_size = state.shape
 
-        inp_data = np.zeros((num_samples, state_size + 1))
-        outp_data = np.zeros((num_samples, state_size + 1))
+        inp_data = np.zeros((num_samples * batch_size, state_size + 1))
+        outp_data = np.zeros((num_samples * batch_size, state_size + 2))
 
         print(dir(env.action_space))
+        action_space = env.action_space
+        assert isinstance(action_space, Box)
+        steps_since_terminated = 0
+        max_steps_since_terminated = 250
+
         for i in tqdm(range(num_samples)):
-            action_space = env.action_space
-            assert isinstance(action_space, Box)
+
             action = np.array(
                 np.random.uniform(
-                    low=action_space.low, high=action_space.high, size=(1, 1)
+                    low=action_space.low, high=action_space.high, size=(batch_size, 1)
                 ),
                 dtype=action_space.dtype,
             )
-            inp_data[i, :state_size] = state[0]
-            inp_data[i, state_size] = action[0, 0]
+            inp_data[i * batch_size : (i + 1) * batch_size, :state_size] = state
+            inp_data[i * batch_size : (i + 1) * batch_size, state_size] = action[:, 0]
             next_state, reward, terminated, info = env.step(action)
 
             next_state = next_state
-            outp_data[i, :state_size] = next_state[0]
-            outp_data[i, state_size] = reward[0]
+            outp_data[i * batch_size : (i + 1) * batch_size, :state_size] = next_state
+            outp_data[i * batch_size : (i + 1) * batch_size, state_size] = reward
+            outp_data[i * batch_size : (i + 1) * batch_size, state_size + 1] = (
+                terminated
+            )
             state = np.copy(next_state)
+
+            if terminated.any():
+                steps_since_terminated += 1
+                if steps_since_terminated > max_steps_since_terminated:
+                    state = env.reset()
+                    steps_since_terminated = 0
+
+        num_samples_with_terminated = np.sum(outp_data[:, state_size + 1])
+        print(f"Number of samples with terminated: {num_samples_with_terminated}")
+        print(
+            f"Number of samples without terminated: {num_samples - num_samples_with_terminated}"
+        )
+        print(f"Termination rate: {num_samples_with_terminated / num_samples:.6f}")
+
+        terminated_idxs = np.where(outp_data[:, state_size + 1] == 1)[0]
+        non_terminated_idxs = np.where(outp_data[:, state_size + 1] == 0)[0]
+
+        num_terminated = len(terminated_idxs)
+        num_non_terminated = len(non_terminated_idxs)
+
+        print(f"Number of terminated samples: {num_terminated}")
+        print(f"Number of non-terminated samples: {num_non_terminated}")
+
+        min_samples = min(num_terminated, num_non_terminated)
+
+        terminated_idxs = terminated_idxs[:min_samples]
+        non_terminated_idxs = non_terminated_idxs[:min_samples]
+
+        inp_data = inp_data[np.concatenate([terminated_idxs, non_terminated_idxs])]
+        outp_data = outp_data[np.concatenate([terminated_idxs, non_terminated_idxs])]
+
+        # shuffle the dataset
+        idxs = np.arange(len(inp_data))
+        np.random.shuffle(idxs)
+        inp_data = inp_data[idxs]
+        outp_data = outp_data[idxs]
+
+        # print termination rate
+        print(f"Termination rate: {np.mean(outp_data[:, state_size + 1])}")
+
+        num_samples = len(inp_data)
 
         print(np.min(outp_data, axis=0))
         print(np.max(outp_data, axis=0))
@@ -192,33 +254,41 @@ def main():
         # Scale the data to normalize inputs and outputs
         from sklearn.preprocessing import StandardScaler
 
-        if os.path.exists(
-            f"{save_folder}/cartpole_input_scaler.joblib"
-        ) and os.path.exists(f"{save_folder}/cartpole_output_scaler.joblib"):
-            scaler_input = joblib.load(f"{save_folder}/cartpole_input_scaler.joblib")
-            scaler_output = joblib.load(f"{save_folder}/cartpole_output_scaler.joblib")
+        if (
+            os.path.exists(f"{save_folder}/cartpole_state_scaler.joblib")
+            and os.path.exists(f"{save_folder}/cartpole_action_scaler.joblib")
+            and os.path.exists(f"{save_folder}/cartpole_reward_scaler.joblib")
+        ):
+            state_scaler = joblib.load(f"{save_folder}/cartpole_state_scaler.joblib")
+            action_scaler = joblib.load(f"{save_folder}/cartpole_action_scaler.joblib")
             print("Loaded scalers from file")
         else:
-            scaler_input = StandardScaler()
-            scaler_output = StandardScaler()
+            action_scaler = StandardScaler()
+            state_scaler = StandardScaler()
 
-            inp_data_scaled = scaler_input.fit_transform(inp_data)
-            outp_data_scaled = scaler_output.fit_transform(outp_data)
+            state_size = inp_data.shape[1] - 1
 
-            print("Data scaling completed")
-            print(
-                f"Input data - Min: {np.min(inp_data_scaled, axis=0)}, Max: {np.max(inp_data_scaled, axis=0)}"
-            )
-            print(
-                f"Output data - Min: {np.min(outp_data_scaled, axis=0)}, Max: {np.max(outp_data_scaled, axis=0)}"
-            )
+            state_scaler.fit(inp_data[:, :state_size])
+            action_scaler.fit(inp_data[:, state_size : state_size + 1])
 
             # Save the scalers
-            joblib.dump(scaler_input, f"{save_folder}/cartpole_input_scaler.joblib")
-            joblib.dump(scaler_output, f"{save_folder}/cartpole_output_scaler.joblib")
+            joblib.dump(state_scaler, f"{save_folder}/cartpole_state_scaler.joblib")
+            joblib.dump(action_scaler, f"{save_folder}/cartpole_action_scaler.joblib")
 
-        inp_data = inp_data_scaled
-        outp_data = outp_data_scaled
+        inp_data[:, :state_size] = state_scaler.transform(inp_data[:, :state_size])
+        inp_data[:, state_size : state_size + 1] = action_scaler.transform(
+            inp_data[:, state_size : state_size + 1]
+        )
+        outp_data[:, :state_size] = state_scaler.transform(outp_data[:, :state_size])
+
+        print(
+            f"Input data - Min: {np.min(inp_data, axis=0)}, Max: {np.max(inp_data, axis=0)}"
+        )
+        print(
+            f"Output data - Min: {np.min(outp_data, axis=0)}, Max: {np.max(outp_data, axis=0)}"
+        )
+
+        print("Data scaling completed")
 
     model = SimpleModel(
         input_dim=inp_data.shape[1], hidden_dim=1024, output_dim=outp_data.shape[1]
@@ -231,7 +301,7 @@ def main():
         (inp_data[:num_examples, :], outp_data[:num_examples, :]),
         batch_size=512,
         num_epochs=200,
-        learning_rate=0.001,
+        learning_rate=0.0001,
         early_stopping_patience=20,
     )
 
@@ -248,20 +318,32 @@ def main():
 
     y_hat = model(X_test)
 
-    pred_error = y_test - y_hat
+    pred_error = y_test[:, :-1] - y_hat[:, :-1]
+    clf_error = y_test[:, -1] - y_hat[:, -1]
 
     abs_errs = np.abs(pred_error.detach().numpy())
-    abs_vals = np.abs(y_test.detach().numpy())
+    abs_vals = np.abs(y_test[:, :-1].detach().numpy())
     rel_err = np.mean(np.divide(abs_errs, abs_vals), axis=0)
+
+    clf_error = np.abs(clf_error.detach().numpy())
+    clf_vals = np.abs(y_test[:, -1].detach().numpy())
+    clf_rel_err = np.mean(np.divide(clf_error, clf_vals))
 
     print(f"\nMean absolute error per output dimension: {np.mean(abs_errs, axis=0)}")
     print(f"Mean relative error per output dimension: {rel_err}")
     print(f"Overall mean absolute error: {np.mean(abs_errs):.6f}")
     print(f"Overall mean relative error: {np.mean(rel_err):.6f}")
+    print(f"Mean classification error: {np.mean(clf_error):.6f}")
+    print(f"Mean classification relative error: {np.mean(clf_rel_err):.6f}")
 
-    value_range = np.abs(np.max(outp_data, axis=0) - np.min(outp_data, axis=0))
+    value_range = np.abs(
+        np.max(outp_data[:, :-1], axis=0) - np.min(outp_data[:, :-1], axis=0)
+    )
     normalized_error = np.divide(np.mean(abs_errs, axis=0), value_range)
     print(f"Normalized error per dimension (MAE/range): {normalized_error}")
+
+    accuracy = np.mean(clf_error < 0.5)
+    print(f"Accuracy: {accuracy:.6f}")
 
     plt.plot(normalized_error)
 
@@ -273,8 +355,8 @@ def main():
     os.makedirs(f"{save_folder}/{folder_name}", exist_ok=True)
     torch.save(model, f"{save_folder}/{folder_name}/model.pth")
     if USE_SCALERS:
-        joblib.dump(scaler_input, f"{save_folder}/{folder_name}/input_scaler.joblib")
-        joblib.dump(scaler_output, f"{save_folder}/{folder_name}/output_scaler.joblib")
+        joblib.dump(state_scaler, f"{save_folder}/{folder_name}/state_scaler.joblib")
+        joblib.dump(action_scaler, f"{save_folder}/{folder_name}/action_scaler.joblib")
 
     print(f"\nModel and scalers saved to: {save_folder}/{folder_name}")
 
