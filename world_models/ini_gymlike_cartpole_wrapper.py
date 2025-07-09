@@ -30,12 +30,12 @@ SEED = 42
 N_ENVS = 16
 
 
-def make_env():
+def make_env(render_mode="rgb_array"):
     """
     Instantiate the CartPoleEnv, then wrap with Monitor.
     Monitor records episode reward/length for logging callbacks.
     """
-    env = CartPoleEnv(render_mode=None, task=TASK, cartpole_type=CARTPOLE_TYPE)
+    env = CartPoleEnv(render_mode=render_mode, task=TASK, cartpole_type=CARTPOLE_TYPE)
     env = TimeLimit(env, max_episode_steps=env.max_episode_steps)
     return Monitor(env)
 
