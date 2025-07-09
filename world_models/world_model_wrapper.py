@@ -38,6 +38,3 @@ class WorldModelWrapper(VecNormalize):
 
     def reset(self):
         return super().reset()
-
-class WorldModelNeuralNetwork(nn.Module):
-    
