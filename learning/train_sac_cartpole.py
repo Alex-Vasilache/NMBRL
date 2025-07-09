@@ -8,6 +8,8 @@ from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
 import numpy as np
 import torch
 
+from collections import deque
+from stable_baselines3.common.callbacks import BaseCallback
 from typing import Callable
 from stable_baselines3 import SAC
 from stable_baselines3.common.utils import set_random_seed
@@ -121,10 +123,6 @@ def main():
     # ─── 7) CLEANUP ─────────────────────────────────────────────────────────────
     train_env.close()
     eval_env.close()
-
-
-from collections import deque
-from stable_baselines3.common.callbacks import BaseCallback
 
 
 class RollingSuccessCountCallback(BaseCallback):
