@@ -14,7 +14,7 @@ class DMCWrapper(gym.Env):
     It processes observations to be a flat numpy array.
     """
 
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
     def __init__(
         self,
@@ -81,7 +81,7 @@ class DMCWrapper(gym.Env):
                 if not hasattr(self, "_window_initialized"):
                     self._window_name = "DMC Cartpole"
                     cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow(self._window_name, 640, 480)
+                    cv2.resizeWindow(self._window_name, 960, 540)
                     self._window_initialized = True
 
                 # Get the frame from dm_control
@@ -102,16 +102,16 @@ class DMCWrapper(gym.Env):
             except ImportError:
                 print("OpenCV not available, falling back to rgb_array mode")
                 return self.env.physics.render(
-                    height=480, width=640, camera_id=self.camera_id
+                    height=540, width=960, camera_id=self.camera_id
                 )
             except Exception as e:
                 print(f"Error in human rendering: {e}, falling back to rgb_array mode")
                 return self.env.physics.render(
-                    height=480, width=640, camera_id=self.camera_id
+                    height=540, width=960, camera_id=self.camera_id
                 )
         else:
             return self.env.physics.render(
-                height=480, width=640, camera_id=self.camera_id
+                height=540, width=960, camera_id=self.camera_id
             )
 
     def close(self):

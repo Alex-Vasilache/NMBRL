@@ -23,7 +23,7 @@ from stable_baselines3.common.callbacks import (
 
 SEED = 42
 N_ENVS = 32
-TOTAL_TIMESTEPS = 100_000
+TOTAL_TIMESTEPS = 1_000_000
 
 NET_ARCH = [64, 64]
 BATCH_SIZE = 64
