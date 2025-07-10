@@ -21,6 +21,8 @@ class WorldModelWrapper(DummyVecEnv):
         batch_size: int = 1,
         trained_folder: str = "world_models/trained/v1",
         model_check_interval_s: int = 5,
+        obs_clip_range: float = 10.0,
+        reward_clip_range: tuple = (-2.0, 2.0),
     ):
         # --- Basic Env Setup ---
         self.observation_space = observation_space
@@ -29,6 +31,10 @@ class WorldModelWrapper(DummyVecEnv):
         self.state_size = self.observation_space.shape[0]
         assert isinstance(self.action_space, spaces.Box)
         self.action_size = self.action_space.shape[0]
+
+        # --- Clipping Ranges ---
+        self.obs_clip_range = obs_clip_range
+        self.reward_clip_range = reward_clip_range
 
         # --- DummyVecEnv Initialization ---
         class DummyGymEnv(gym.Env):
@@ -91,6 +97,8 @@ class WorldModelWrapper(DummyVecEnv):
             input_dim=self.state_size + self.action_size,
             hidden_dim=1024,  # From trainer script
             output_dim=self.state_size + 1,  # next_state + reward
+            state_size=self.state_size,
+            action_size=self.action_size,
         )
 
     def _create_placeholder_model(self):
@@ -128,6 +136,16 @@ class WorldModelWrapper(DummyVecEnv):
                 )
                 new_model.eval()  # Set to evaluation mode
 
+                with torch.no_grad():
+                    # --- Test with a dummy input to check for NaNs ---
+                    dummy_input = torch.randn(1, self.state_size + self.action_size)
+                    test_output = new_model(dummy_input)
+                    if torch.isnan(test_output).any():
+                        print(
+                            f"[{datetime.now()}] ERROR: Model at {self.model_path} produced NaNs on a test input. Skipping load."
+                        )
+                        return False
+
                 with self.model_lock:
                     self.nn_model = new_model
                 self.latest_mod_time = current_mod_time
@@ -162,15 +180,38 @@ class WorldModelWrapper(DummyVecEnv):
             next_state_tensor = outputs[:, : self.state_size]
             reward_tensor = outputs[:, self.state_size]
 
-            self.state = next_state_tensor
+            # --- NaN/inf check and clamping ---
+            if (
+                torch.isnan(next_state_tensor).any()
+                or torch.isinf(next_state_tensor).any()
+            ):
+                print(
+                    f"[{datetime.now()}] WARNING: NaN/inf detected in predicted next_state. State: {self.state.numpy()}, Action: {action_np}"
+                )
+                # Replace NaNs with zeros or a reset state
+                next_state_tensor = torch.nan_to_num(
+                    next_state_tensor,
+                    nan=0.0,
+                    posinf=self.obs_clip_range,
+                    neginf=-self.obs_clip_range,
+                )
+
+            clamped_next_state = torch.clamp(
+                next_state_tensor, -self.obs_clip_range, self.obs_clip_range
+            )
+            clamped_reward = torch.clamp(
+                reward_tensor, self.reward_clip_range[0], self.reward_clip_range[1]
+            )
+
+            self.state = clamped_next_state
 
         terminated = np.zeros(self.num_envs, dtype=bool)
         # In a real scenario, you might want the world model to predict termination.
         # For now, we assume it never terminates on its own.
         infos = [{} for _ in range(self.num_envs)]
         return (
-            next_state_tensor.numpy(),
-            reward_tensor.numpy(),
+            clamped_next_state.numpy(),
+            clamped_reward.numpy(),
             terminated,
             infos,
         )

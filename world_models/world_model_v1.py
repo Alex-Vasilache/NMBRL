@@ -26,12 +26,16 @@ class SimpleModel(nn.Module):
         input_dim,
         hidden_dim,
         output_dim,
+        state_size,
+        action_size,
         state_scaler=None,
         action_scaler=None,
     ):
         super(SimpleModel, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
+        self.state_size = state_size
+        self.action_size = action_size
         self.hidden = nn.Linear(input_dim, hidden_dim)  # Hidden layer
         self.relu = nn.ReLU()  # ReLU activation
         self.hidden2 = nn.Linear(hidden_dim, hidden_dim)
@@ -42,22 +46,34 @@ class SimpleModel(nn.Module):
 
     def forward(self, x, use_input_scaler=False, use_output_scaler=False):
         if use_input_scaler:
-            x[:, : self.state_size] = self.state_scaler.transform(
-                x[:, : self.state_size]
-            )
-            x[:, self.state_size : self.state_size + 1] = self.action_scaler.transform(
-                x[:, self.state_size : self.state_size + 1]
-            )
+            if self.state_scaler:
+                x[:, : self.state_size] = self.state_scaler.transform(
+                    x[:, : self.state_size]
+                )
+            if self.action_scaler:
+                x[:, self.state_size : self.state_size + self.action_size] = (
+                    self.action_scaler.transform(
+                        x[:, self.state_size : self.state_size + self.action_size]
+                    )
+                )
         x = self.hidden(x)  # Pass through hidden layer
         x = self.relu(x)  # Apply ReLU activation
         x = self.hidden2(x)
         x = self.relu2(x)
         x = self.output(x)  # Pass through output layer
-        # apply sigmoid to last value (terminated)
-        x[:, -1] = torch.sigmoid(x[:, -1])
+
+        # --- Clamp outputs to reasonable ranges ---
+        # State is clipped based on the VecNormalize wrapper's clip_obs value
+        state_output = torch.clamp(x[:, : self.state_size], -10.0, 10.0)
+        # Reward is clipped to a reasonable range for cartpole-swingup (normally 0-1)
+        reward_output = torch.clamp(x[:, self.state_size], -2.0, 2.0).unsqueeze(1)
+
+        x = torch.cat([state_output, reward_output], dim=1)
+
         if use_output_scaler:
-            x[:, : self.state_size] = self.state_scaler.inverse_transform(
-                x[:, : self.state_size]
-            )
+            if self.state_scaler:
+                x[:, : self.state_size] = self.state_scaler.inverse_transform(
+                    x[:, : self.state_size]
+                )
 
         return x

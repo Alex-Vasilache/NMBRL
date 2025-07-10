@@ -26,7 +26,7 @@ def run_system():
     """
     # 1. Create unique folder for the run
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_folder = f"full_system_run_{timestamp}"
+    run_folder = f"full_system_run/{timestamp}"
     world_model_folder = os.path.join(run_folder, "world_model_data")
     os.makedirs(world_model_folder, exist_ok=True)
     print(f"--- Created unique folder for this run: {run_folder} ---")
@@ -38,6 +38,8 @@ def run_system():
     print("--- Getting environment dimensions ---")
     sim_env = wrapper(seed=42, n_envs=1)
     sim_env.reset()  # This is crucial to initialize the spaces
+    if sim_env.observation_space is None or sim_env.action_space is None:
+        raise RuntimeError("Environment spaces were not initialized correctly.")
     state_size = sim_env.observation_space.shape[0]
     action_size = sim_env.action_space.shape[0]
     print(f"State size: {state_size}, Action size: {action_size}")

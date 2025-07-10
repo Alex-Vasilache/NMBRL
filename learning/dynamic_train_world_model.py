@@ -264,6 +264,8 @@ def main():
         input_dim=state_size + action_size,
         hidden_dim=1024,
         output_dim=state_size + 1,  # next_state, reward
+        state_size=state_size,
+        action_size=action_size,
     )
 
     # --- Setup for Threaded Training Cycle ---
