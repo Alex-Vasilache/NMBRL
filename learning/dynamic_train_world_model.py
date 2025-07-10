@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
-import copy
 import argparse
 import time
 import pickle
@@ -46,17 +45,20 @@ def train_model(
 
     # Split the dataset into training and validation sets
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=validation_split, random_state=42
+        X, y, test_size=validation_split, random_state=42, shuffle=True
     )
+
+    y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+    y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
 
     # Create DataLoader for training and validation
     train_dataset = torch.utils.data.TensorDataset(
         torch.tensor(X_train, dtype=torch.float32),
-        torch.tensor(y_train, dtype=torch.float32),
+        y_train_tensor,
     )
     val_dataset = torch.utils.data.TensorDataset(
         torch.tensor(X_val, dtype=torch.float32),
-        torch.tensor(y_val, dtype=torch.float32),
+        y_val_tensor,
     )
 
     train_loader = torch.utils.data.DataLoader(
@@ -111,9 +113,20 @@ def train_model(
 
         val_losses.append(epoch_val_loss)
 
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}"
-        )
+        # --- Calculate percentage errors ---
+        train_rmse = np.sqrt(epoch_train_loss)
+        train_err_perc = (
+            train_rmse / (torch.mean(torch.abs(y_train_tensor)) + 1e-8)
+        ) * 100
+
+        val_rmse = np.sqrt(epoch_val_loss)
+        val_err_perc = (val_rmse / (torch.mean(torch.abs(y_val_tensor)) + 1e-8)) * 100
+
+        current_lr = optimizer.param_groups[0]["lr"]
+        if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == num_epochs - 1:
+            print(
+                f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.6f} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.6f} ({val_err_perc:.2f}%), LR: {current_lr:.6f}"
+            )
 
         # Check for external stop signal
         if stop_event and stop_event.is_set():
