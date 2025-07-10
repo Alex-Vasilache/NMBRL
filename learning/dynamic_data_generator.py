@@ -8,6 +8,9 @@ import multiprocessing
 import portalocker
 import queue  # For queue.Empty exception
 import argparse
+from stable_baselines3 import SAC
+from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+from gymnasium.spaces import Box
 
 
 def write_to_buffer(buffer_path: str, data: Any) -> None:
@@ -27,23 +30,50 @@ class RandomPolicy:
     def __init__(self, action_space):
         self.action_space = action_space
 
-    def predict(self, obs):
-        return self.action_space.sample().reshape(1, -1)
+    def predict(self, obs, deterministic=False):
+        return self.action_space.sample().reshape(1, -1), None
 
 
-def get_latest_actor(action_space, actor_path: str) -> Any:
-    """Get latest trained actor from local buffer. If no actor is found, return random Policy."""
-    if os.path.exists(actor_path):
-        try:
-            # Assuming the actor is a PyTorch model
-            return torch.load(actor_path)
-        except Exception as e:
-            print(f"Could not load actor, using random policy. Error: {e}")
-            return RandomPolicy(action_space)
-    return RandomPolicy(action_space)
+def find_latest_model(actor_dir: str):
+    """Finds the latest model .zip file and the VecNormalize stats .pkl file."""
+
+    actor_dir = os.path.join(actor_dir, "logs", "best_model")
+    try:
+        files_in_dir = os.listdir(actor_dir)
+    except (FileNotFoundError, NotADirectoryError):
+        print(
+            f"Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{actor_dir}'"
+        )
+        return None, None
+
+    model_files = [
+        os.path.join(actor_dir, f) for f in files_in_dir if f.endswith(".zip")
+    ]
+
+    if not model_files:
+        if not files_in_dir:
+            print(
+                f"Info: Actor directory is empty. Waiting for a model to be saved in '{actor_dir}'"
+            )
+        else:
+            print(f"Info: No models (.zip files) found in '{actor_dir}'.")
+        return None, None
+
+    latest_model = max(model_files, key=os.path.getctime)
+
+    # Find the corresponding VecNormalize file if it exists
+    model_name_without_ext = os.path.splitext(os.path.basename(latest_model))[0]
+    vec_normalize_path = os.path.join(
+        actor_dir, f"{model_name_without_ext}_vecnorm.pkl"
+    )
+
+    if not os.path.exists(vec_normalize_path):
+        vec_normalize_path = None
+
+    return latest_model, vec_normalize_path
 
 
-def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interval=5):
+def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interval=1):
     """Periodically writes the contents of the data queue to the file buffer."""
 
     def write_data():
@@ -68,9 +98,6 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 
 
 def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
-    from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
-    from gymnasium.spaces import Box
-
     max_episode_steps = 10000
 
     env = wrapper(
@@ -87,15 +114,45 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
     episode_length = 0
     episode_count = 0
 
+    # -- Load initial actor --
+    actor = RandomPolicy(env.action_space)
+    latest_model_path = None
+    check_interval = 5  # seconds
+    last_check_time = time.time()
+
     while not stop_event.is_set():
         if os.path.exists(stop_file_path):
             print("Stop file detected. Shutting down.")
             stop_event.set()
             continue
 
-        actor = get_latest_actor(env.action_space, actor_path)
+        # -- Periodically check for a new actor --
+        if time.time() - last_check_time > check_interval:
+            new_model_path, vec_normalize_path = find_latest_model(actor_path)
+            print(f"New model path: {new_model_path}")
+            last_check_time = time.time()
 
-        action = actor.predict(state)
+            if new_model_path and new_model_path != latest_model_path:
+                print(f"Found new model: {new_model_path}")
+                latest_model_path = new_model_path
+
+                # Load VecNormalize stats if they exist
+                if vec_normalize_path:
+                    print(f"Loading VecNormalize stats from: {vec_normalize_path}")
+                    env = wrapper.load(vec_normalize_path, env)
+                    env.venv.render_mode = "human"
+                    env.training = False
+                    env.norm_reward = False
+
+                # Load the new actor
+                try:
+                    actor = SAC.load(latest_model_path, env=env)
+                    print("Successfully loaded new actor.")
+                except Exception as e:
+                    print(f"Error loading actor: {e}. Using random policy.")
+                    actor = RandomPolicy(env.action_space)
+
+        action, _ = actor.predict(state, deterministic=True)
 
         inp_data[:state_size] = state[0]
         inp_data[state_size] = action[0, 0]
@@ -125,7 +182,6 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
             episode_count += 1
 
         offload_env_data(data_queue, inp_data, outp_data)
-        time.sleep(0.01)  # Small sleep to avoid busy-waiting
 
 
 if __name__ == "__main__":
@@ -140,11 +196,20 @@ if __name__ == "__main__":
 
     save_folder = args.save_folder
     buffer_path = os.path.join(save_folder, "buffer.pkl")
-    actor_path = os.path.join(save_folder, "actor", "latest.pth")
+    RUNS_DIR = "runs"
+    run_dirs = [
+        os.path.join(RUNS_DIR, d)
+        for d in os.listdir(RUNS_DIR)
+        if os.path.isdir(os.path.join(RUNS_DIR, d))
+    ]
+    if not run_dirs:
+        print("No run directories found.")
+    latest_run_dir = max(run_dirs, key=os.path.getctime)
+    actor_path = latest_run_dir
     stop_file_path = os.path.join(save_folder, "stop_signal.tmp")
 
     os.makedirs(os.path.dirname(buffer_path), exist_ok=True)
-    os.makedirs(os.path.dirname(actor_path), exist_ok=True)
+    os.makedirs(actor_path, exist_ok=True)
 
     # Clean up stop file from previous runs at startup
     if os.path.exists(stop_file_path):

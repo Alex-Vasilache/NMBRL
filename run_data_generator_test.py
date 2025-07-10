@@ -52,7 +52,7 @@ def run_test():
     """
     # 1. Create unique folder
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_folder = f"runs/{timestamp}"
+    save_folder = f"temp/{timestamp}"
     os.makedirs(save_folder, exist_ok=True)
     print(f"--- Created unique folder for this run: {save_folder} ---")
 
