@@ -40,7 +40,7 @@ def find_latest_model(actor_dir: str):
         files_in_dir = os.listdir(actor_dir)
     except (FileNotFoundError, NotADirectoryError):
         print(
-            f"Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{actor_dir}'"
+            f"[GENERATOR] Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{actor_dir}'"
         )
         return None, None
 
@@ -51,10 +51,10 @@ def find_latest_model(actor_dir: str):
     if not model_files:
         if not files_in_dir:
             print(
-                f"Info: Actor directory is empty. Waiting for a model to be saved in '{actor_dir}'"
+                f"[GENERATOR] Info: Actor directory is empty. Waiting for a model to be saved in '{actor_dir}'"
             )
         else:
-            print(f"Info: No models (.zip files) found in '{actor_dir}'.")
+            print(f"[GENERATOR] Info: No models (.zip files) found in '{actor_dir}'.")
         return None, None
 
     latest_model = max(model_files, key=os.path.getctime)
@@ -84,14 +84,14 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
                     break
 
             if data_to_write:
-                print(f"Writing {len(data_to_write)} items to buffer...")
+                print(f"[GENERATOR] Writing {len(data_to_write)} items to buffer...")
                 write_to_buffer(buffer_path, data_to_write)
 
     while not stop_event.wait(timeout=write_interval):
         write_data()
 
     # One last write after the loop exits to flush any remaining items
-    print("Writer process stopping. Performing final flush.")
+    print("[GENERATOR] Writer process stopping. Performing final flush.")
     write_data()
 
 
@@ -120,23 +120,25 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
 
     while not stop_event.is_set():
         if os.path.exists(stop_file_path):
-            print("Stop file detected. Shutting down.")
+            print("[GENERATOR] Stop file detected. Shutting down.")
             stop_event.set()
             continue
 
         # -- Periodically check for a new actor --
         if time.time() - last_check_time > check_interval:
             new_model_path, vec_normalize_path = find_latest_model(actor_path)
-            print(f"New model path: {new_model_path}")
+            print(f"[GENERATOR] New model path: {new_model_path}")
             last_check_time = time.time()
 
             if new_model_path and new_model_path != latest_model_path:
-                print(f"Found new model: {new_model_path}")
+                print(f"[GENERATOR] Found new model: {new_model_path}")
                 latest_model_path = new_model_path
 
                 # Load VecNormalize stats if they exist
                 if vec_normalize_path:
-                    print(f"Loading VecNormalize stats from: {vec_normalize_path}")
+                    print(
+                        f"[GENERATOR] Loading VecNormalize stats from: {vec_normalize_path}"
+                    )
                     env = wrapper.load(vec_normalize_path, env)
                     env.venv.render_mode = "human"
                     env.training = False
@@ -145,9 +147,9 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
                 # Load the new actor
                 try:
                     actor = SAC.load(latest_model_path, env=env)
-                    print("Successfully loaded new actor.")
+                    print("[GENERATOR] Successfully loaded new actor.")
                 except Exception as e:
-                    print(f"Error loading actor: {e}. Using random policy.")
+                    print(f"[GENERATOR] Error loading actor: {e}. Using random policy.")
                     actor = RandomPolicy(env.action_space)
 
         action, _ = actor.predict(state, deterministic=True)
@@ -164,7 +166,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
         env.render()
 
         if info[0].get("sim_should_stop", False):
-            print("Render window closed by user, stopping generation.")
+            print("[GENERATOR] Render window closed by user, stopping generation.")
             stop_event.set()
 
         episode_reward += reward[0]
@@ -172,7 +174,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
 
         if terminated[0]:
             print(
-                f"Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
+                f"[GENERATOR] Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
             )
             state = env.reset()
             episode_reward = 0
@@ -201,7 +203,7 @@ if __name__ == "__main__":
         if os.path.isdir(os.path.join(RUNS_DIR, d))
     ]
     if not run_dirs:
-        print("No run directories found.")
+        print("[GENERATOR] No run directories found.")
     latest_run_dir = max(run_dirs, key=os.path.getctime)
     actor_path = latest_run_dir
     stop_file_path = os.path.join(save_folder, "stop_signal.tmp")
@@ -224,11 +226,11 @@ if __name__ == "__main__":
     try:
         main(stop_event, data_queue, actor_path, stop_file_path)
     except KeyboardInterrupt:
-        print("Stopping data generation.")
+        print("[GENERATOR] Stopping data generation.")
     finally:
         stop_event.set()
         writer_proc.join()
         # Clean up stop file on exit
         if os.path.exists(stop_file_path):
             os.remove(stop_file_path)
-        print("Data generation stopped.")
+        print("[GENERATOR] Data generation stopped.")

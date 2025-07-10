@@ -5,6 +5,7 @@ import threading
 import datetime
 import shutil
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+from world_models.dynamic_world_model_wrapper import WorldModelWrapper
 
 
 def stream_watcher(identifier, stream):
@@ -33,12 +34,20 @@ def run_test():
 
     # --- Get environment dimensions ---
     print("--- Getting environment dimensions ---")
-    temp_env = wrapper(seed=42, n_envs=1)
-    temp_env.reset()
-    state_size = temp_env.observation_space.shape[0]
-    action_size = temp_env.action_space.shape[0]
-    temp_env.close()
+    sim_env = wrapper(seed=42, n_envs=1)
+    sim_env.reset()  # This is crucial to initialize the spaces
+    state_size = sim_env.observation_space.shape[0]
+    action_size = sim_env.action_space.shape[0]
     print(f"State size: {state_size}, Action size: {action_size}")
+
+    # --- Initialize World Model Wrapper for testing ---
+    # This will run in the main process, but we won't step through it.
+    # We just want to ensure it can be created and closed.
+    world_model_env = WorldModelWrapper(
+        observation_space=sim_env.observation_space,
+        action_space=sim_env.action_space,
+        trained_folder=save_folder,
+    )
 
     # --- Commands to run ---
     generator_command = [
@@ -165,6 +174,9 @@ def run_test():
 
         # 7. Clean up
         print(f"--- Cleaning up test folder: {save_folder} ---")
+        # Clean up the environments
+        sim_env.close()
+        world_model_env.close()
         shutil.rmtree(save_folder, ignore_errors=True)
 
         print("\n--- Dynamic training test finished ---")

@@ -125,12 +125,14 @@ def train_model(
         current_lr = optimizer.param_groups[0]["lr"]
         if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == num_epochs - 1:
             print(
-                f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.6f} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.6f} ({val_err_perc:.2f}%), LR: {current_lr:.6f}"
+                f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.6f} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.6f} ({val_err_perc:.2f}%), LR: {current_lr:.6f}"
             )
 
         # Check for external stop signal
         if stop_event and stop_event.is_set():
-            print(f"\nTraining interrupted by signal after {epoch + 1} epochs.")
+            print(
+                f"\n[TRAINER] Training interrupted by signal after {epoch + 1} epochs."
+            )
             break
 
     return train_losses, val_losses, val_dataset
@@ -157,7 +159,7 @@ def pop_data_from_buffer(buffer_path):
                     # This can happen if the writer is in the middle of writing.
                     # We'll just try again later.
                     print(
-                        "Warning: Encountered a partial write. Skipping this read attempt."
+                        "[TRAINER] Warning: Encountered a partial write. Skipping this read attempt."
                     )
                     return []
 
@@ -168,10 +170,12 @@ def pop_data_from_buffer(buffer_path):
 
             return all_data
     except portalocker.exceptions.LockException:
-        print("Could not acquire lock on buffer file, another process is using it.")
+        print(
+            "[TRAINER] Could not acquire lock on buffer file, another process is using it."
+        )
         return []
     except Exception as e:
-        print(f"An unexpected error occurred while reading the buffer: {e}")
+        print(f"[TRAINER] An unexpected error occurred while reading the buffer: {e}")
         return []
 
 
@@ -206,7 +210,7 @@ def buffer_watcher(stop_training_event, buffer_path, threshold, interval=5):
         num_records = peek_buffer_size(buffer_path)
         if num_records >= threshold:
             print(
-                f"[Watcher] Found {num_records} records (threshold: {threshold}). Signaling for training update."
+                f"[TRAINER-WATCHER] Found {num_records} records (threshold: {threshold}). Signaling for training update."
             )
             stop_training_event.set()
         time.sleep(interval)
@@ -275,12 +279,12 @@ def main():
     )
     watcher_thread.start()
 
-    print("World model trainer started. Waiting for data...")
+    print("[TRAINER] World model trainer started. Waiting for data...")
 
     # --- Main Training Loop ---
     while True:
         # Wait until the watcher signals that there's enough data
-        print("Waiting for sufficient data to start training cycle...")
+        print("[TRAINER] Waiting for sufficient data to start training cycle...")
         stop_training_event.wait()
         stop_training_event.clear()
 
@@ -288,7 +292,7 @@ def main():
         new_data = pop_data_from_buffer(buffer_path)
 
         if not new_data:
-            print("Watcher signaled but buffer was empty. Retrying...")
+            print("[TRAINER] Watcher signaled but buffer was empty. Retrying...")
             continue
 
         inp_data, outp_data = zip(*new_data)
@@ -304,17 +308,19 @@ def main():
         if np.any(invalid_rows_mask):
             num_invalid = np.sum(invalid_rows_mask)
             print(
-                f"Warning: Found {num_invalid} rows with NaN/inf values. Removing them."
+                f"[TRAINER] Warning: Found {num_invalid} rows with NaN/inf values. Removing them."
             )
             training_inp = training_inp[~invalid_rows_mask]
             training_outp = training_outp[~invalid_rows_mask]
 
         if len(training_inp) == 0:
-            print("No valid data remaining after sanitation. Skipping training cycle.")
+            print(
+                "[TRAINER] No valid data remaining after sanitation. Skipping training cycle."
+            )
             continue
 
         print(
-            f"\n--- Starting training on new batch of {len(training_inp)} records ---"
+            f"\n[TRAINER] --- Starting training on new batch of {len(training_inp)} records ---"
         )
 
         # The watcher thread is still running. We need to clear the event again
@@ -332,9 +338,9 @@ def main():
             stop_event=stop_training_event,
         )
 
-        print("--- Training cycle finished/interrupted. Saving model. ---")
+        print("[TRAINER] --- Training cycle finished/interrupted. Saving model. ---")
         torch.save(model.state_dict(), model_save_path)
-        print(f"Model saved to {model_save_path}")
+        print(f"[TRAINER] Model saved to {model_save_path}")
 
 
 if __name__ == "__main__":
