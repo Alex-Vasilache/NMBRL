@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 import os
 import pickle
 import time
@@ -10,7 +9,6 @@ import queue  # For queue.Empty exception
 import argparse
 from stable_baselines3 import SAC
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
-from gymnasium.spaces import Box
 
 
 def write_to_buffer(buffer_path: str, data: Any) -> None:

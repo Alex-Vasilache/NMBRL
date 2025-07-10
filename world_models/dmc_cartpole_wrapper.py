@@ -1,4 +1,4 @@
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, Callable
 from collections import OrderedDict
 import numpy as np
 import gymnasium as gym
@@ -17,11 +17,22 @@ class DMCWrapper(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
     def __init__(
-        self, domain_name, task_name, render_mode: Optional[str] = None, camera_id=0
+        self,
+        domain_name,
+        task_name,
+        render_mode: Optional[str] = None,
+        camera_id=0,
+        max_episode_steps=1000,
     ):
-        self.env = suite.load(domain_name, task_name, visualize_reward=True)
+        self.env = suite.load(
+            domain_name,
+            task_name,
+            visualize_reward=True,
+            task_kwargs={"time_limit": float("inf")},
+        )
         self.render_mode = render_mode
         self.camera_id = camera_id
+        self.max_episode_steps = max_episode_steps
         # Convert dm_control action spec to gymnasium space
         action_spec = self.env.action_spec()
         self.action_space = gym.spaces.Box(
@@ -58,7 +69,8 @@ class DMCWrapper(gym.Env):
         super().reset(seed=seed)
         time_step = self.env.reset()
         obs = self._flatten_obs(time_step.observation)
-        return obs, {}
+        info = {}
+        return obs, info
 
     def render(self):
         if self.render_mode == "human":
@@ -113,9 +125,16 @@ class DMCWrapper(gym.Env):
             pass
 
 
-def make_dmc_env(render_mode="none", max_episode_steps=1000):
-    def _init():
-        env = DMCWrapper("cartpole", "swingup", render_mode=render_mode)
+def make_dmc_env(
+    render_mode: str = "none", max_episode_steps: int = 1000
+) -> Callable[[], gym.Env]:
+    def _init() -> gym.Env:
+        env = DMCWrapper(
+            "cartpole",
+            "swingup",
+            render_mode=render_mode,
+            max_episode_steps=max_episode_steps,
+        )
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
         return Monitor(env)
 

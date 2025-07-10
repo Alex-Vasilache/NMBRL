@@ -8,8 +8,6 @@ from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 import numpy as np
 import torch
 
-from collections import deque
-from stable_baselines3.common.callbacks import BaseCallback
 from typing import Callable
 from stable_baselines3 import SAC
 from stable_baselines3.common.utils import set_random_seed
@@ -22,14 +20,14 @@ from stable_baselines3.common.callbacks import (
 # ─── 0) CONFIGURATION ─────────────────────────────────────────────────────────
 
 SEED = 42
-N_ENVS = 16
-TOTAL_TIMESTEPS = 500_000
+N_ENVS = 32
+TOTAL_TIMESTEPS = 1_000_000
 
-NET_ARCH = [128, 128]
+NET_ARCH = [512, 512]
 BATCH_SIZE = 256
 INITIAL_LR = 3e-4
 
-MAX_EPISODE_STEPS = 5000
+MAX_EPISODE_STEPS = 10000
 
 
 def main():

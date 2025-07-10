@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 import os
-import time
-import numpy as np
-import pygame
 from stable_baselines3 import SAC
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
@@ -70,7 +67,7 @@ def main():
     # --- Create and load evaluation environment ---
     # The stats file (vec_normalize_path) contains the running average of observations
     # It's important to load this to ensure the model sees data in the same distribution it was trained on
-    eval_env = wrapper(seed=42, n_envs=1, render_mode="human", max_episode_steps=1000)
+    eval_env = wrapper(seed=42, n_envs=1, render_mode="human", max_episode_steps=5000)
     if vec_normalize_path:
         print(f"Loading VecNormalize stats from: {vec_normalize_path}")
         eval_env = wrapper.load(vec_normalize_path, eval_env)
