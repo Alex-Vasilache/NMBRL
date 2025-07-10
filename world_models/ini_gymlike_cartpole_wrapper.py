@@ -3,7 +3,14 @@ import sys
 
 # This is a hacky way to ensure the imports from the submodule work
 submodule_root = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "environments", "CartPoleSimulation")
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "environments",
+        "physical-cartpole",
+        "Driver",
+        "CartPoleSimulation",
+    )
 )
 gymlike_root = os.path.join(submodule_root, "GymlikeCartPole")
 
@@ -32,7 +39,7 @@ from stable_baselines3.common.monitor import Monitor
 #  - "swing_up"      → random starts + swing-up reward shaping
 TASK = "swingup"
 
-CARTPOLE_TYPE = "custom_sim"  # "openai", "custom_sim", "physical"
+CARTPOLE_TYPE = "custom_sim"  # "remote", "custom_sim"
 
 SEED = 42
 N_ENVS = 16
@@ -58,15 +65,46 @@ def make_env(render_mode="none", max_episode_steps=1000):
         s[ANGLE_SIN_IDX] = np.sin(s[ANGLE_IDX])
         return s.astype(np.float32)
 
+    def reward(state, action, step_idx, terminated):
+        """
+        Returns dm_control style swingup reward.
+        """
+        # Extract state components
+        cart_pos = state[POSITION_IDX]
+        cart_vel = state[POSITION_IDX + 1]
+        angle_cos = state[ANGLE_COS_IDX]
+        angle_vel = state[ANGLED_IDX]
+
+        # dm_control swingup reward components
+        upright = (angle_cos + 1) / 2
+
+        # Centered cart reward with tolerance margin=2
+        cart_centered = np.exp(-0.5 * (cart_pos / 2) ** 2)
+        centered = (1 + cart_centered) / 2
+
+        # Small control penalty with tolerance margin=1, quadratic sigmoid
+        control_mag = abs(action[0])
+        small_control = np.exp(-0.5 * (control_mag / 1) ** 2)
+        small_control = (4 + small_control) / 5
+
+        # Small angular velocity reward with tolerance margin=5
+        small_velocity = np.exp(-0.5 * (abs(angle_vel) / 5) ** 2)
+        small_velocity = (1 + small_velocity) / 2
+
+        reward = upright * small_control * small_velocity * centered
+
+        return float(reward)
+
     def _init():
         env = CartPoleEnv(
             render_mode=render_mode,
             task=TASK,
             cartpole_type=CARTPOLE_TYPE,
-            max_episode_steps=max_episode_steps,
+            # max_episode_steps=max_episode_steps,
         )
 
         env.task.init_state = init_state
+        env.task.reward = reward
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
         return Monitor(env)
 
