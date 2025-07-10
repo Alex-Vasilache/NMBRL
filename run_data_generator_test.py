@@ -1,8 +1,6 @@
 import subprocess
 import time
 import os
-import signal
-import sys
 import threading
 import datetime
 import pickle
@@ -54,7 +52,7 @@ def run_test():
     """
     # 1. Create unique folder
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_folder = f"temp_test_run_{timestamp}"
+    save_folder = f"runs/{timestamp}"
     os.makedirs(save_folder, exist_ok=True)
     print(f"--- Created unique folder for this run: {save_folder} ---")
 

@@ -1,9 +1,11 @@
 numpy==1.26.4
 torch
-tensorboard
+tensorboard==2.14.1
+protobuf==4.25.8
+absl-py==1.4.0
 PyYAML
 dm_control
-opencv-python-headless
+opencv-contrib-python==4.8.1.78
 gymnasium
 stable-baselines3[extra]
 portalocker

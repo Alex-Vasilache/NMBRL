@@ -3,9 +3,7 @@ import torch
 import os
 import pickle
 import time
-import random
-from typing import List, Any
-import collections
+from typing import Any
 import multiprocessing
 import portalocker
 import queue  # For queue.Empty exception
@@ -70,12 +68,12 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 
 
 def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
-    from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
+    from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
     from gymnasium.spaces import Box
 
     max_episode_steps = 10000
 
-    env = GymlikeCartpoleWrapper(
+    env = wrapper(
         seed=42, n_envs=1, render_mode="human", max_episode_steps=max_episode_steps
     )
 
