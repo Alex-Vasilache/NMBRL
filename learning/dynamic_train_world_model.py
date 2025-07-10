@@ -1,8 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import torch
-from tqdm import tqdm
-import joblib
 import os
 from world_models.world_model_v1 import SimpleModel
 
@@ -15,8 +12,7 @@ import argparse
 import time
 import pickle
 import portalocker
-
-save_folder = "world_models/trained/dynamic"
+import threading
 
 
 def train_model(
@@ -26,7 +22,7 @@ def train_model(
     num_epochs=100,
     learning_rate=0.001,
     validation_split=0.2,
-    early_stopping_patience=10,
+    stop_event=None,
 ):
     """
     Train a PyTorch model that maps vectors to vectors.
@@ -38,7 +34,7 @@ def train_model(
     - num_epochs: Number of training epochs.
     - learning_rate: Learning rate for the optimizer.
     - validation_split: Fraction of the dataset to use for validation.
-    - early_stopping_patience: Number of epochs to wait for improvement before stopping.
+    - stop_event: A threading.Event to signal interruption from another thread.
 
     Returns:
     - train_losses: List of training losses.
@@ -72,7 +68,6 @@ def train_model(
 
     # Define loss function and optimizer
     criterion = nn.MSELoss()  # Mean Squared Error Loss for regression tasks
-    classification_criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -82,10 +77,6 @@ def train_model(
     train_losses = []
     val_losses = []
 
-    best_val_loss = float("inf")
-    epochs_no_improve = 0
-    best_model_wts = copy.deepcopy(model.state_dict())
-
     for epoch in range(num_epochs):
         model.train()  # Set the model to training mode
         epoch_train_loss = 0.0
@@ -93,14 +84,7 @@ def train_model(
         for inputs, targets in train_loader:
             optimizer.zero_grad()  # Zero the gradients
             outputs = model(inputs)  # Forward pass
-            reg_loss = criterion(outputs[:, -1], targets[:, -1])  # Compute loss
-            classification_loss = classification_criterion(
-                outputs[:, -1], targets[:, -1]
-            )
-            reg_weight = outputs.shape[1] - 1
-            clf_weight = 1
-
-            loss = reg_weight * reg_loss + clf_weight * classification_loss
+            loss = criterion(outputs, targets)  # Compute loss
             loss.backward()  # Backward pass
             optimizer.step()  # Update weights
 
@@ -117,13 +101,7 @@ def train_model(
         with torch.no_grad():  # No gradient computation during validation
             for inputs, targets in val_loader:
                 outputs = model(inputs)
-                reg_loss = criterion(outputs[:, -1], targets[:, -1])  # Compute loss
-                classification_loss = classification_criterion(
-                    outputs[:, -1], targets[:, -1]
-                )
-                reg_weight = outputs.shape[1] - 1
-                clf_weight = 1
-                loss = reg_weight * reg_loss + clf_weight * classification_loss
+                loss = criterion(outputs, targets)
                 epoch_val_loss += loss.item() * inputs.size(0)
 
         # Average validation loss for the epoch
@@ -137,17 +115,11 @@ def train_model(
             f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}"
         )
 
-        if epoch_val_loss < best_val_loss:
-            best_val_loss = epoch_val_loss
-            best_model_wts = copy.deepcopy(model.state_dict())
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= early_stopping_patience:
-                print(f"\nEarly stopping triggered after {epoch + 1} epochs.")
-                break
+        # Check for external stop signal
+        if stop_event and stop_event.is_set():
+            print(f"\nTraining interrupted by signal after {epoch + 1} epochs.")
+            break
 
-    model.load_state_dict(best_model_wts)
     return train_losses, val_losses, val_dataset
 
 
@@ -190,6 +162,43 @@ def pop_data_from_buffer(buffer_path):
         return []
 
 
+def peek_buffer_size(buffer_path):
+    """Safely checks the number of records in the buffer file without modifying it."""
+    if not os.path.exists(buffer_path) or os.path.getsize(buffer_path) == 0:
+        return 0
+    try:
+        with portalocker.Lock(buffer_path, "rb", timeout=1) as f:
+            count = 0
+            while True:
+                try:
+                    chunk = pickle.load(f)
+                    count += len(chunk)
+                except EOFError:
+                    break
+                except pickle.UnpicklingError:
+                    return 0  # Partial write, ignore for now
+            return count
+    except portalocker.exceptions.LockException:
+        return 0  # Can't get lock, try again later
+    except Exception:
+        return 0
+
+
+def buffer_watcher(stop_training_event, buffer_path, threshold, interval=5):
+    """
+    Periodically checks the buffer and sets an event if enough new data is available.
+    Runs as a daemon thread.
+    """
+    while True:
+        num_records = peek_buffer_size(buffer_path)
+        if num_records >= threshold:
+            print(
+                f"[Watcher] Found {num_records} records (threshold: {threshold}). Signaling for training update."
+            )
+            stop_training_event.set()
+        time.sleep(interval)
+
+
 def main():
     """Main function to train the world model."""
 
@@ -200,85 +209,119 @@ def main():
         required=True,
         help="Path to the folder where data is buffered and models will be saved.",
     )
+    parser.add_argument(
+        "--state-size",
+        type=int,
+        required=True,
+        help="The size of the state space.",
+    )
+    parser.add_argument(
+        "--action-size",
+        type=int,
+        required=True,
+        help="The size of the action space.",
+    )
+    parser.add_argument(
+        "--new-data-threshold",
+        type=int,
+        default=512,
+        help="Number of new records in buffer to trigger a training cycle update.",
+    )
+    parser.add_argument(
+        "--epochs-per-cycle",
+        type=int,
+        default=10000,
+        help="Max epochs to train per cycle if not interrupted.",
+    )
     args = parser.parse_args()
 
     buffer_path = os.path.join(args.save_folder, "buffer.pkl")
     model_save_path = os.path.join(args.save_folder, "model.pth")
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
-    # These could be command-line arguments as well
-    min_buffer_size = 512  # Minimum number of records to start training
-    train_interval_seconds = 10  # How often to check for new data and train
-    epochs_per_iteration = 10  # Number of epochs to train each time
-
-    # Dummy environment to get state and action sizes.
-    # This part can be improved by saving/loading metadata about the env.
-    from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
-
-    temp_env = wrapper(seed=42, n_envs=1)
-    temp_env.reset()
-    state_size = temp_env.observation_space.shape[0]
-    action_size = temp_env.action_space.shape[0]
-    temp_env.close()
+    # Get state and action sizes from arguments
+    state_size = args.state_size
+    action_size = args.action_size
 
     model = SimpleModel(
         input_dim=state_size + action_size,
         hidden_dim=1024,
-        output_dim=state_size + 2,  # next_state, reward, terminated
+        output_dim=state_size + 1,  # next_state, reward
     )
 
-    replay_buffer_inp = np.array([]).reshape(0, state_size + action_size)
-    replay_buffer_outp = np.array([]).reshape(0, state_size + 2)
-    max_replay_buffer_size = 100000
+    # --- Setup for Threaded Training Cycle ---
+    stop_training_event = threading.Event()
+    watcher_thread = threading.Thread(
+        target=buffer_watcher,
+        args=(
+            stop_training_event,
+            buffer_path,
+            args.new_data_threshold,
+        ),
+        daemon=True,
+    )
+    watcher_thread.start()
 
     print("World model trainer started. Waiting for data...")
 
+    # --- Main Training Loop ---
     while True:
+        # Wait until the watcher signals that there's enough data
+        print("Waiting for sufficient data to start training cycle...")
+        stop_training_event.wait()
+        stop_training_event.clear()
+
+        # Pop the new data that triggered the event
         new_data = pop_data_from_buffer(buffer_path)
 
-        if new_data:
-            print(f"Popped {len(new_data)} new records from the buffer.")
+        if not new_data:
+            print("Watcher signaled but buffer was empty. Retrying...")
+            continue
 
-            # Separate inputs and outputs and add to replay buffer
-            inp_data, outp_data = zip(*new_data)
-            new_inp = np.array(inp_data)
-            new_outp = np.array(outp_data)
+        inp_data, outp_data = zip(*new_data)
+        training_inp = np.array(inp_data)
+        # We only want to predict next_state and reward, not terminated status
+        training_outp = np.array(outp_data)[:, : state_size + 1]
 
-            replay_buffer_inp = np.vstack([replay_buffer_inp, new_inp])
-            replay_buffer_outp = np.vstack([replay_buffer_outp, new_outp])
-
-            # Trim buffer if it exceeds max size
-            if len(replay_buffer_inp) > max_replay_buffer_size:
-                print(
-                    f"Replay buffer full. Trimming oldest {len(replay_buffer_inp) - max_replay_buffer_size} records."
-                )
-                replay_buffer_inp = replay_buffer_inp[-max_replay_buffer_size:]
-                replay_buffer_outp = replay_buffer_outp[-max_replay_buffer_size:]
-
-            print(f"Replay buffer size: {len(replay_buffer_inp)}")
-
-        if len(replay_buffer_inp) >= min_buffer_size:
-            print("--- Starting training iteration ---")
-            train_losses, val_losses, _ = train_model(
-                model,
-                (replay_buffer_inp, replay_buffer_outp),
-                batch_size=512,
-                num_epochs=epochs_per_iteration,
-                learning_rate=0.0001,
-                early_stopping_patience=5,
-            )
-            print("--- Finished training iteration ---")
-
-            # Save the model
-            torch.save(model.state_dict(), model_save_path)
-            print(f"Model saved to {model_save_path}")
-
-        else:
+        # --- Data Validation ---
+        combined_data = np.hstack([training_inp, training_outp])
+        invalid_rows_mask = np.isnan(combined_data).any(axis=1) | np.isinf(
+            combined_data
+        ).any(axis=1)
+        if np.any(invalid_rows_mask):
+            num_invalid = np.sum(invalid_rows_mask)
             print(
-                f"Not enough data to train. Have {len(replay_buffer_inp)}/{min_buffer_size}. Waiting..."
+                f"Warning: Found {num_invalid} rows with NaN/inf values. Removing them."
             )
+            training_inp = training_inp[~invalid_rows_mask]
+            training_outp = training_outp[~invalid_rows_mask]
 
-        time.sleep(train_interval_seconds)
+        if len(training_inp) == 0:
+            print("No valid data remaining after sanitation. Skipping training cycle.")
+            continue
+
+        print(
+            f"\n--- Starting training on new batch of {len(training_inp)} records ---"
+        )
+
+        # The watcher thread is still running. We need to clear the event again
+        # in case it was set while we were processing the pop.
+        # This ensures we train for at least a little while before the *next*
+        # batch of data interrupts us.
+        stop_training_event.clear()
+
+        train_losses, val_losses, _ = train_model(
+            model,
+            (training_inp, training_outp),
+            batch_size=len(training_inp),
+            num_epochs=args.epochs_per_cycle,
+            learning_rate=1e-5,
+            stop_event=stop_training_event,
+        )
+
+        print("--- Training cycle finished/interrupted. Saving model. ---")
+        torch.save(model.state_dict(), model_save_path)
+        print(f"Model saved to {model_save_path}")
 
 
 if __name__ == "__main__":

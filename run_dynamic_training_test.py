@@ -4,6 +4,7 @@ import os
 import threading
 import datetime
 import shutil
+from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 
 def stream_watcher(identifier, stream):
@@ -30,6 +31,15 @@ def run_test():
     model_path = os.path.join(save_folder, "model.pth")
     buffer_path = os.path.join(save_folder, "buffer.pkl")
 
+    # --- Get environment dimensions ---
+    print("--- Getting environment dimensions ---")
+    temp_env = wrapper(seed=42, n_envs=1)
+    temp_env.reset()
+    state_size = temp_env.observation_space.shape[0]
+    action_size = temp_env.action_space.shape[0]
+    temp_env.close()
+    print(f"State size: {state_size}, Action size: {action_size}")
+
     # --- Commands to run ---
     generator_command = [
         "python",
@@ -44,6 +54,10 @@ def run_test():
         "learning/dynamic_train_world_model.py",
         "--save-folder",
         save_folder,
+        "--state-size",
+        str(state_size),
+        "--action-size",
+        str(action_size),
     ]
 
     generator_proc = None
