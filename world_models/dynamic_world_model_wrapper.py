@@ -172,7 +172,6 @@ class WorldModelWrapper(DummyVecEnv):
             next_state_tensor.numpy(),
             reward_tensor.numpy(),
             terminated,
-            False,
             infos,
         )
 
@@ -180,7 +179,7 @@ class WorldModelWrapper(DummyVecEnv):
         if seed is not None:
             super().seed(seed)
         self.state = torch.zeros((self.num_envs, self.state_size), dtype=torch.float32)
-        return self.state.numpy(), {}
+        return self.state.numpy()
 
     def set_state(self, state_np: np.ndarray):
         """Sets the internal state of the world model."""

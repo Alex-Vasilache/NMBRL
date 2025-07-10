@@ -2,14 +2,14 @@
 import os
 import random
 from datetime import datetime
+import argparse
 
-from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
+from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+from world_models.dynamic_world_model_wrapper import WorldModelWrapper
 
 import numpy as np
 import torch
 
-from collections import deque
-from stable_baselines3.common.callbacks import BaseCallback
 from typing import Callable
 from stable_baselines3 import SAC
 from stable_baselines3.common.utils import set_random_seed
@@ -22,45 +22,52 @@ from stable_baselines3.common.callbacks import (
 # ─── 0) CONFIGURATION ─────────────────────────────────────────────────────────
 
 SEED = 42
-N_ENVS = 16
-TOTAL_TIMESTEPS = 500_000
+N_ENVS = 32
+TOTAL_TIMESTEPS = 100_000
 
-NET_ARCH = [128, 128]
-BATCH_SIZE = 256
-INITIAL_LR = 1e-3
+NET_ARCH = [64, 64]
+BATCH_SIZE = 64
+INITIAL_LR = 1e-4
 
-MAX_EPISODE_STEPS = 500
+MAX_EPISODE_STEPS = 1000
 
 
 def main():
-    # ─── Run-specific directory setup ─────────────────────────────────────────────
-    # Generate a unique folder for everything produced this run
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join("runs", f"sac_cartpole_{timestamp}")
+    parser = argparse.ArgumentParser(
+        description="Train an SAC agent using a dynamic world model."
+    )
+    parser.add_argument(
+        "--world-model-folder",
+        type=str,
+        required=True,
+        help="Path to the folder where the trained world model is stored and updated.",
+    )
+    args = parser.parse_args()
 
-    # Inside that, separate subfolders for models and various logs
-    MODEL_DIR = os.path.join(run_dir, "models")
-    LOG_DIR = os.path.join(run_dir, "logs")
+    # ─── Directory & Path Setup ──────────────────────────────────────────────────
+    # The --world-model-folder is the shared space for all components
+    shared_folder = args.world_model_folder
+    LOG_DIR = os.path.join(shared_folder, "actor_logs")
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-    # Create the entire hierarchy in one go
-    for d in (
-        MODEL_DIR,
-        os.path.join(LOG_DIR, "tensorboard"),
-        os.path.join(LOG_DIR, "best_model"),
-        os.path.join(LOG_DIR, "eval_logs"),
-        os.path.join(LOG_DIR, "checkpoints"),
-    ):
-        os.makedirs(d, exist_ok=True)
+    # --- Agent Setup --------------------------------------------------------------
+    # Create a temporary real environment just to get the observation and action spaces
+    # This env is then closed and not used for training.
+    print("--- Creating environment to extract space info ---")
+    temp_real_env = wrapper(seed=SEED, n_envs=1)
+    obs_space = temp_real_env.observation_space
+    act_space = temp_real_env.action_space
+    temp_real_env.close()
+    print(f"Obs space: {obs_space}, Action space: {act_space}")
 
-    # ─── 1) REPRODUCIBILITY ────────────────────────────────────────────────────────
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    set_random_seed(SEED)
-
-    # ─── 2) ENV FACTORY ───────────────────────────────────────────────────────────
-    train_env = GymlikeCartpoleWrapper(
-        seed=SEED, n_envs=N_ENVS, max_episode_steps=MAX_EPISODE_STEPS
+    print(
+        f"--- Initializing World Model environment wrapper (monitoring: {args.world_model_folder}) ---"
+    )
+    train_env = WorldModelWrapper(
+        observation_space=obs_space,
+        action_space=act_space,
+        batch_size=N_ENVS,
+        trained_folder=args.world_model_folder,
     )
 
     # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
@@ -75,19 +82,20 @@ def main():
     model = SAC(
         "MlpPolicy",
         train_env,
-        policy_kwargs=dict(net_arch=NET_ARCH),
+        policy_kwargs=dict(net_arch=NET_ARCH, log_std_init=-3),
         buffer_size=100_000,
         batch_size=BATCH_SIZE,
         learning_starts=1_000,
         train_freq=(1, "step"),
-        gradient_steps=4,
+        gradient_steps=1,
+        gamma=0.98,
         tau=0.02,
-        ent_coef=0.0001,
+        ent_coef="auto",
         target_update_interval=1,
-        use_sde=True,
-        sde_sample_freq=4,
+        use_sde=False,  # Disable SDE for more stable training
+        sde_sample_freq=-1,  # Not used when SDE is false
         learning_rate=linear_schedule(INITIAL_LR),
-        verbose=0,
+        verbose=1,
         tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
         seed=SEED,
         device="auto",
@@ -95,9 +103,7 @@ def main():
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
-    eval_env = GymlikeCartpoleWrapper(
-        seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS
-    )
+    eval_env = wrapper(seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS)
 
     eval_callback = EvalCallback(
         eval_env,
@@ -115,18 +121,14 @@ def main():
     callbacks = CallbackList([eval_callback, checkpoint_callback])
 
     # ─── 6) TRAINING & SAVING ────────────────────────────────────────────────────
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callbacks, progress_bar=True)
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callbacks, progress_bar=False)
 
-    model_name = f"sac_cartpole_arch{'x'.join(map(str, NET_ARCH))}_bs{BATCH_SIZE}_lr{INITIAL_LR:.0e}"
-    model_path = os.path.join(MODEL_DIR, f"{model_name}.zip")
-    vec_path = os.path.join(MODEL_DIR, f"{model_name}_vecnorm.pkl")
-
-    model.save(model_path)
-    train_env.save(vec_path)
+    # The callbacks handle saving the best model and checkpoints, so a final save is not needed.
 
     # ─── 7) CLEANUP ─────────────────────────────────────────────────────────────
     train_env.close()
     eval_env.close()
+    print("\n[SAC-TRAINER] Training finished and environments closed.")
 
 
 if __name__ == "__main__":

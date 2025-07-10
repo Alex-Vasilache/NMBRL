@@ -35,26 +35,29 @@ class RandomPolicy:
 def find_latest_model(actor_dir: str):
     """Finds the latest model .zip file and the VecNormalize stats .pkl file."""
 
-    actor_dir = os.path.join(actor_dir, "logs", "best_model")
+    # The SAC trainer saves the best model in a specific subfolder
+    best_model_dir = os.path.join(actor_dir, "actor_logs", "best_model")
     try:
-        files_in_dir = os.listdir(actor_dir)
+        files_in_dir = os.listdir(best_model_dir)
     except (FileNotFoundError, NotADirectoryError):
         print(
-            f"[GENERATOR] Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{actor_dir}'"
+            f"[GENERATOR] Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{best_model_dir}'"
         )
         return None, None
 
     model_files = [
-        os.path.join(actor_dir, f) for f in files_in_dir if f.endswith(".zip")
+        os.path.join(best_model_dir, f) for f in files_in_dir if f.endswith(".zip")
     ]
 
     if not model_files:
         if not files_in_dir:
             print(
-                f"[GENERATOR] Info: Actor directory is empty. Waiting for a model to be saved in '{actor_dir}'"
+                f"[GENERATOR] Info: Actor directory is empty. Waiting for a model to be saved in '{best_model_dir}'"
             )
         else:
-            print(f"[GENERATOR] Info: No models (.zip files) found in '{actor_dir}'.")
+            print(
+                f"[GENERATOR] Info: No models (.zip files) found in '{best_model_dir}'."
+            )
         return None, None
 
     latest_model = max(model_files, key=os.path.getctime)
@@ -62,7 +65,7 @@ def find_latest_model(actor_dir: str):
     # Find the corresponding VecNormalize file if it exists
     model_name_without_ext = os.path.splitext(os.path.basename(latest_model))[0]
     vec_normalize_path = os.path.join(
-        actor_dir, f"{model_name_without_ext}_vecnorm.pkl"
+        best_model_dir, f"{model_name_without_ext}_vecnorm.pkl"
     )
 
     if not os.path.exists(vec_normalize_path):
@@ -196,16 +199,8 @@ if __name__ == "__main__":
 
     save_folder = args.save_folder
     buffer_path = os.path.join(save_folder, "buffer.pkl")
-    RUNS_DIR = "runs"
-    run_dirs = [
-        os.path.join(RUNS_DIR, d)
-        for d in os.listdir(RUNS_DIR)
-        if os.path.isdir(os.path.join(RUNS_DIR, d))
-    ]
-    if not run_dirs:
-        print("[GENERATOR] No run directories found.")
-    latest_run_dir = max(run_dirs, key=os.path.getctime)
-    actor_path = latest_run_dir
+    # The actor path is now the same as the save_folder
+    actor_path = save_folder
     stop_file_path = os.path.join(save_folder, "stop_signal.tmp")
 
     os.makedirs(os.path.dirname(buffer_path), exist_ok=True)

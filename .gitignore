@@ -20,3 +20,4 @@ runs*
 *.npz
 *.joblib
 *.pkl
+full_system_run*
