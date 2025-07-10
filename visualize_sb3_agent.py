@@ -4,7 +4,7 @@ import time
 import numpy as np
 import pygame
 from stable_baselines3 import SAC
-from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
+from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 
 def find_latest_model_and_vecnormalize(run_dir):
@@ -70,12 +70,10 @@ def main():
     # --- Create and load evaluation environment ---
     # The stats file (vec_normalize_path) contains the running average of observations
     # It's important to load this to ensure the model sees data in the same distribution it was trained on
-    eval_env = GymlikeCartpoleWrapper(
-        seed=42, n_envs=1, render_mode="human", max_episode_steps=1000
-    )
+    eval_env = wrapper(seed=42, n_envs=1, render_mode="human", max_episode_steps=1000)
     if vec_normalize_path:
         print(f"Loading VecNormalize stats from: {vec_normalize_path}")
-        eval_env = GymlikeCartpoleWrapper.load(vec_normalize_path, eval_env)
+        eval_env = wrapper.load(vec_normalize_path, eval_env)
         # The render_mode is not saved in the vecnormalize file, so we need to set it again
         eval_env.venv.render_mode = "human"
 
@@ -96,7 +94,7 @@ def main():
         episode_reward = 0
         while not done:
             # By pumping pygame events, we keep the window responsive
-            pygame.event.pump()
+            # pygame.event.pump()
 
             action, _states = model.predict(obs, deterministic=True)
             obs, reward, done, info = eval_env.step(action)

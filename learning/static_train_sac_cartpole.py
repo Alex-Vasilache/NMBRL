@@ -3,7 +3,7 @@ import os
 import random
 from datetime import datetime
 
-from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
+from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 import numpy as np
 import torch
@@ -59,9 +59,7 @@ def main():
     set_random_seed(SEED)
 
     # ─── 2) ENV FACTORY ───────────────────────────────────────────────────────────
-    train_env = GymlikeCartpoleWrapper(
-        seed=SEED, n_envs=N_ENVS, max_episode_steps=MAX_EPISODE_STEPS
-    )
+    train_env = wrapper(seed=SEED, n_envs=N_ENVS, max_episode_steps=MAX_EPISODE_STEPS)
 
     # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
     def linear_schedule(initial_value: float) -> Callable[[float], float]:
@@ -95,9 +93,7 @@ def main():
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
-    eval_env = GymlikeCartpoleWrapper(
-        seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS
-    )
+    eval_env = wrapper(seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS)
 
     eval_callback = EvalCallback(
         eval_env,

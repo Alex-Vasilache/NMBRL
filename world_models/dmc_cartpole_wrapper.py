@@ -19,14 +19,15 @@ class DMCWrapper(gym.Env):
     def __init__(
         self, domain_name, task_name, render_mode: Optional[str] = None, camera_id=0
     ):
-        self.env = suite.load(domain_name, task_name)
+        self.env = suite.load(domain_name, task_name, visualize_reward=True)
         self.render_mode = render_mode
         self.camera_id = camera_id
-
         # Convert dm_control action spec to gymnasium space
         action_spec = self.env.action_spec()
         self.action_space = gym.spaces.Box(
-            low=action_spec.minimum, high=action_spec.maximum, dtype=np.float32
+            low=action_spec.minimum.astype(np.float32),
+            high=action_spec.maximum.astype(np.float32),
+            dtype=np.float32,
         )
 
         # Convert dm_control observation spec to gymnasium space
@@ -73,7 +74,9 @@ class DMCWrapper(gym.Env):
 
                 # Get the frame from dm_control
                 frame = self.env.physics.render(
-                    width=640, height=480, camera_id=self.camera_id
+                    width=640,
+                    height=480,
+                    camera_id=self.camera_id,
                 )
 
                 # OpenCV expects BGR, dm_control renders in RGB
