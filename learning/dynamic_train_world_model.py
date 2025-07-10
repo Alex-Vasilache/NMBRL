@@ -11,6 +11,10 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 import copy
+import argparse
+import time
+import pickle
+import portalocker
 
 save_folder = "world_models/trained/dynamic"
 
@@ -147,120 +151,134 @@ def train_model(
     return train_losses, val_losses, val_dataset
 
 
+def pop_data_from_buffer(buffer_path):
+    """
+    Reads all data from the buffer file, clears the file, and returns the data.
+    Uses file locking to prevent race conditions.
+    """
+    if not os.path.exists(buffer_path) or os.path.getsize(buffer_path) == 0:
+        return []
+
+    try:
+        with portalocker.Lock(buffer_path, "rb+", timeout=5) as f:
+            all_data = []
+            while True:
+                try:
+                    # Load all pickled objects from the file
+                    all_data.extend(pickle.load(f))
+                except EOFError:
+                    break
+                except pickle.UnpicklingError:
+                    # This can happen if the writer is in the middle of writing.
+                    # We'll just try again later.
+                    print(
+                        "Warning: Encountered a partial write. Skipping this read attempt."
+                    )
+                    return []
+
+            # Truncate the file to clear it
+            if all_data:
+                f.seek(0)
+                f.truncate()
+
+            return all_data
+    except portalocker.exceptions.LockException:
+        print("Could not acquire lock on buffer file, another process is using it.")
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred while reading the buffer: {e}")
+        return []
+
+
 def main():
     """Main function to train the world model."""
 
-    from world_models.ini_gymlike_cartpole_wrapper import GymlikeCartpoleWrapper
-    from gymnasium.spaces import Box
-
-    max_episode_steps = 10000
-    env = GymlikeCartpoleWrapper(
-        seed=42, n_envs=1, render_mode="human", max_episode_steps=max_episode_steps
+    parser = argparse.ArgumentParser(description="Run the dynamic world model trainer.")
+    parser.add_argument(
+        "--save-folder",
+        type=str,
+        required=True,
+        help="Path to the folder where data is buffered and models will be saved.",
     )
+    args = parser.parse_args()
 
-    state = env.reset()
-    state_size = state.shape[0]
+    buffer_path = os.path.join(args.save_folder, "buffer.pkl")
+    model_save_path = os.path.join(args.save_folder, "model.pth")
+    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
-    inp_data = np.zeros((max_episode_steps, state_size + 1))
-    outp_data = np.zeros((max_episode_steps, state_size + 2))
+    # These could be command-line arguments as well
+    min_buffer_size = 512  # Minimum number of records to start training
+    train_interval_seconds = 10  # How often to check for new data and train
+    epochs_per_iteration = 10  # Number of epochs to train each time
 
-    action_space = env.action_space
-    assert isinstance(action_space, Box)
+    # Dummy environment to get state and action sizes.
+    # This part can be improved by saving/loading metadata about the env.
+    from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+
+    temp_env = wrapper(seed=42, n_envs=1)
+    temp_env.reset()
+    state_size = temp_env.observation_space.shape[0]
+    action_size = temp_env.action_space.shape[0]
+    temp_env.close()
 
     model = SimpleModel(
-        input_dim=state_size + 1, hidden_dim=1024, output_dim=state_size + 2
+        input_dim=state_size + action_size,
+        hidden_dim=1024,
+        output_dim=state_size + 2,  # next_state, reward, terminated
     )
 
-    for i in tqdm(range(max_episode_steps)):
+    replay_buffer_inp = np.array([]).reshape(0, state_size + action_size)
+    replay_buffer_outp = np.array([]).reshape(0, state_size + 2)
+    max_replay_buffer_size = 100000
 
-        action = np.array(
-            np.random.uniform(
-                low=action_space.low, high=action_space.high, size=(1, 1)
-            ),
-            dtype=action_space.dtype,
-        )
-        inp_data[i, :state_size] = state[0]
-        inp_data[i, state_size] = action[:, 0]
-        next_state, reward, terminated, info = env.step(action)
+    print("World model trainer started. Waiting for data...")
 
-        outp_data[i, :state_size] = next_state[0]
-        outp_data[i, state_size] = reward[0]
-        outp_data[i, state_size + 1] = terminated[0]
-        state = next_state
+    while True:
+        new_data = pop_data_from_buffer(buffer_path)
 
-        if terminated:
-            state = env.reset()
+        if new_data:
+            print(f"Popped {len(new_data)} new records from the buffer.")
 
-    # shuffle the dataset
-    idxs = np.arange(len(inp_data))
-    np.random.shuffle(idxs)
-    inp_data = inp_data[idxs]
-    outp_data = outp_data[idxs]
+            # Separate inputs and outputs and add to replay buffer
+            inp_data, outp_data = zip(*new_data)
+            new_inp = np.array(inp_data)
+            new_outp = np.array(outp_data)
 
-    # Train the model
-    train_losses, val_losses, val_dataset = train_model(
-        model,
-        (inp_data, outp_data),
-        batch_size=512,
-        num_epochs=200,
-        learning_rate=0.0001,
-        early_stopping_patience=20,
-    )
+            replay_buffer_inp = np.vstack([replay_buffer_inp, new_inp])
+            replay_buffer_outp = np.vstack([replay_buffer_outp, new_outp])
 
-    # Print training statistics
-    print("\n=== Training Statistics ===")
-    print(f"Final training loss: {train_losses[-1]:.6f}")
-    print(f"Final validation loss: {val_losses[-1]:.6f}")
-    print(f"Best training loss: {min(train_losses):.6f}")
-    print(f"Best validation loss: {min(val_losses):.6f}")
-    print(f"Training loss improvement: {train_losses[0] - train_losses[-1]:.6f}")
-    print(f"Validation loss improvement: {val_losses[0] - val_losses[-1]:.6f}")
+            # Trim buffer if it exceeds max size
+            if len(replay_buffer_inp) > max_replay_buffer_size:
+                print(
+                    f"Replay buffer full. Trimming oldest {len(replay_buffer_inp) - max_replay_buffer_size} records."
+                )
+                replay_buffer_inp = replay_buffer_inp[-max_replay_buffer_size:]
+                replay_buffer_outp = replay_buffer_outp[-max_replay_buffer_size:]
 
-    X_test, y_test = val_dataset.tensors
+            print(f"Replay buffer size: {len(replay_buffer_inp)}")
 
-    y_hat = model(X_test)
+        if len(replay_buffer_inp) >= min_buffer_size:
+            print("--- Starting training iteration ---")
+            train_losses, val_losses, _ = train_model(
+                model,
+                (replay_buffer_inp, replay_buffer_outp),
+                batch_size=512,
+                num_epochs=epochs_per_iteration,
+                learning_rate=0.0001,
+                early_stopping_patience=5,
+            )
+            print("--- Finished training iteration ---")
 
-    pred_error = y_test[:, :-1] - y_hat[:, :-1]
-    clf_error = y_test[:, -1] - y_hat[:, -1]
+            # Save the model
+            torch.save(model.state_dict(), model_save_path)
+            print(f"Model saved to {model_save_path}")
 
-    abs_errs = np.abs(pred_error.detach().numpy())
-    abs_vals = np.abs(y_test[:, :-1].detach().numpy())
-    rel_err = np.mean(np.divide(abs_errs, abs_vals), axis=0)
+        else:
+            print(
+                f"Not enough data to train. Have {len(replay_buffer_inp)}/{min_buffer_size}. Waiting..."
+            )
 
-    clf_error = np.abs(clf_error.detach().numpy())
-    clf_vals = np.abs(y_test[:, -1].detach().numpy())
-    clf_rel_err = np.mean(np.divide(clf_error, clf_vals))
-
-    print(f"\nMean absolute error per output dimension: {np.mean(abs_errs, axis=0)}")
-    print(f"Mean relative error per output dimension: {rel_err}")
-    print(f"Overall mean absolute error: {np.mean(abs_errs):.6f}")
-    print(f"Overall mean relative error: {np.mean(rel_err):.6f}")
-    print(f"Mean classification error: {np.mean(clf_error):.6f}")
-    print(f"Mean classification relative error: {np.mean(clf_rel_err):.6f}")
-
-    value_range = np.abs(
-        np.max(outp_data[:, :-1], axis=0) - np.min(outp_data[:, :-1], axis=0)
-    )
-    normalized_error = np.divide(np.mean(abs_errs, axis=0), value_range)
-    print(f"Normalized error per dimension (MAE/range): {normalized_error}")
-
-    accuracy = np.mean(clf_error < 0.5)
-    print(f"Accuracy: {accuracy:.6f}")
-
-    plt.plot(normalized_error)
-
-    # find next available folder name  (v1, v2, ...)
-    i = 1
-    while os.path.isdir(f"{save_folder}/v{i}"):
-        i += 1
-    folder_name = f"v{i}"
-    os.makedirs(f"{save_folder}/{folder_name}", exist_ok=True)
-    torch.save(model, f"{save_folder}/{folder_name}/model.pth")
-    if USE_SCALERS:
-        joblib.dump(state_scaler, f"{save_folder}/{folder_name}/state_scaler.joblib")
-        joblib.dump(action_scaler, f"{save_folder}/{folder_name}/action_scaler.joblib")
-
-    print(f"\nModel and scalers saved to: {save_folder}/{folder_name}")
+        time.sleep(train_interval_seconds)
 
 
 if __name__ == "__main__":
