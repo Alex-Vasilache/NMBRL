@@ -106,9 +106,9 @@ class ActorWrapper:
                 # Load the new actor model
                 print(f"[ACTOR-WRAPPER] Loading new {self.agent_type} actor model...")
                 if self.agent_type == "PPO":
-                    new_actor = PPO.load(new_model_path, env=env_for_loading)
+                    new_actor = PPO.load(new_model_path)
                 elif self.agent_type == "SAC":
-                    new_actor = SAC.load(new_model_path, env=env_for_loading)
+                    new_actor = SAC.load(new_model_path)
                 else:
                     print(
                         f"[ACTOR-WRAPPER] Unknown agent type {self.agent_type}, cannot load model."
