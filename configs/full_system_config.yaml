@@ -17,7 +17,7 @@ data_generator:
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 4096
+  new_data_threshold: 2048
   watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 256
@@ -37,13 +37,13 @@ sac_trainer:
   n_envs: 32
   max_episode_steps: 1000
   # Training run settings
-  total_timesteps: 1000000
+  total_timesteps: 100000
   # Model architecture
-  net_arch: [128, 128]
+  net_arch: [512, 512]
   # SAC Hyperparameters
-  batch_size: 64
+  batch_size: 32
   buffer_size: 100000
-  learning_starts: 1000
+  learning_starts: 100
   initial_lr: 0.0001
   gamma: 0.997
   tau: 0.01

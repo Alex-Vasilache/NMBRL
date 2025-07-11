@@ -7,8 +7,8 @@ import multiprocessing
 import portalocker
 import queue  # For queue.Empty exception
 import argparse
-import yaml  # Import the YAML library
-from stable_baselines3 import SAC
+import yaml
+from learning.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 
@@ -97,15 +97,21 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 
 
 def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: dict):
-    max_episode_steps = config["data_generator"]["max_episode_steps"]
-
-    env = wrapper(
+    # Create the base environment that the ActorWrapper will manage
+    base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
         render_mode="human",
-        max_episode_steps=max_episode_steps,
+        max_episode_steps=config["data_generator"]["max_episode_steps"],
     )
 
+    # Instantiate the actor wrapper
+    actor_wrapper = ActorWrapper(
+        actor_path=actor_path, base_env=base_env, config=config
+    )
+
+    # Initialize state and data buffers from the initial environment
+    env = base_env
     state = env.reset()
     state_size = env.observation_space.shape[0]
 
@@ -116,89 +122,50 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
     episode_length = 0
     episode_count = 0
 
-    # -- Load initial actor --
-    actor = RandomPolicy(env.action_space)
-    latest_model_path = None
-    check_interval = config["data_generator"]["actor_check_interval_seconds"]
-    last_check_time = time.time()
+    try:
+        while not stop_event.is_set():
+            if os.path.exists(stop_file_path):
+                print("[GENERATOR] Stop file detected. Shutting down.")
+                stop_event.set()
+                continue
 
-    while not stop_event.is_set():
-        if os.path.exists(stop_file_path):
-            print("[GENERATOR] Stop file detected. Shutting down.")
-            stop_event.set()
-            continue
+            # Get the latest actor and environment from the wrapper
+            actor, env = actor_wrapper.get_actor_and_env()
 
-        # -- Periodically check for a new actor --
-        if time.time() - last_check_time > check_interval:
-            new_model_path, vec_normalize_path = find_latest_model(actor_path)
-            last_check_time = time.time()
+            action, _ = actor.predict(state, deterministic=False)
 
-            if new_model_path and new_model_path != latest_model_path:
-                print(f"[GENERATOR] Found new model: {new_model_path}")
-                latest_model_path = new_model_path
+            inp_data[:state_size] = state[0]
+            inp_data[state_size] = action[0, 0]
+            next_state, reward, terminated, info = env.step(action)
 
-                # Load VecNormalize stats if they exist
-                if vec_normalize_path:
-                    print(
-                        f"[GENERATOR] Loading VecNormalize stats from: {vec_normalize_path}"
-                    )
-                    # The environment returned by wrapper.load is the VecNormalize environment
-                    # We need to set the render_mode on the underlying environment if possible
-                    loaded_env = wrapper.load(vec_normalize_path, env)
-                    try:
-                        loaded_env.venv.render_mode = "human"
-                    except AttributeError:
-                        # This might happen if the environment is not a DummyVecEnv/SubprocVecEnv
-                        # It's a best-effort attempt.
-                        print(
-                            "[GENERATOR] Could not set render_mode on the loaded environment."
-                        )
-                    loaded_env.training = False
-                    loaded_env.norm_reward = False
-                    env = loaded_env
+            outp_data[:state_size] = next_state[0]
+            outp_data[state_size] = reward[0]
+            outp_data[state_size + 1] = terminated[0]
+            state = next_state
 
-                # Load the new actor
-                try:
-                    actor = SAC.load(latest_model_path, env=env)
-                    print("[GENERATOR] Successfully loaded new actor.")
-                except Exception as e:
-                    print(f"[GENERATOR] Error loading actor: {e}. Using random policy.")
-                    actor = RandomPolicy(env.action_space)
+            env.render()
 
-        action, _ = actor.predict(state, deterministic=False)
+            sim_should_stop = info[0].get("sim_should_stop", False)
+            if sim_should_stop:
+                print("[GENERATOR] Render window closed by user, stopping generation.")
+                stop_event.set()
 
-        inp_data[:state_size] = state[0]
-        inp_data[state_size] = action[0, 0]
-        # We need to handle the case where info is a list of dicts
-        next_state, reward, terminated, info = env.step(action)
+            episode_reward += reward[0]
+            episode_length += 1
 
-        outp_data[:state_size] = next_state[0]
-        outp_data[state_size] = reward[0]
-        outp_data[state_size + 1] = terminated[0]
-        state = next_state
+            if terminated[0]:
+                print(
+                    f"[GENERATOR] Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
+                )
+                state = env.reset()
+                episode_reward = 0
+                episode_length = 0
+                episode_count += 1
 
-        env.render()
-
-        # Handle info being a list of dicts for VecEnv
-        sim_should_stop = info[0].get("sim_should_stop", False)
-
-        if sim_should_stop:
-            print("[GENERATOR] Render window closed by user, stopping generation.")
-            stop_event.set()
-
-        episode_reward += reward[0]
-        episode_length += 1
-
-        if terminated[0]:
-            print(
-                f"[GENERATOR] Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
-            )
-            state = env.reset()
-            episode_reward = 0
-            episode_length = 0
-            episode_count += 1
-
-        offload_env_data(data_queue, inp_data, outp_data)
+            offload_env_data(data_queue, inp_data, outp_data)
+    finally:
+        # Ensure the actor wrapper's thread is cleaned up
+        actor_wrapper.close()
 
 
 if __name__ == "__main__":
