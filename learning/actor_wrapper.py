@@ -1,8 +1,6 @@
 import os
 import threading
-import time
-import numpy as np
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, PPO
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 
@@ -103,7 +101,7 @@ class ActorWrapper:
 
                 # Load the new actor model
                 print("[ACTOR-WRAPPER] Loading new actor model...")
-                new_actor = SAC.load(new_model_path, env=env_for_loading)
+                new_actor = PPO.load(new_model_path, env=env_for_loading)
                 print("[ACTOR-WRAPPER] Successfully loaded new actor.")
 
                 # Safely update the shared actor and environment

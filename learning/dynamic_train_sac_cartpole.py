@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 import os
-import random
-from datetime import datetime
 import argparse
 import yaml  # Import the YAML library
 
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
 
-import numpy as np
-import torch
 
 from typing import Callable
-from stable_baselines3 import SAC
-from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.callbacks import (
     EvalCallback,
     CheckpointCallback,
@@ -81,29 +76,12 @@ def main():
 
         return lr_fn
 
-    model = SAC(
+    model = PPO(
         "MlpPolicy",
         train_env,
-        policy_kwargs=dict(
-            net_arch=sac_config["net_arch"],
-            log_std_init=-3,
-        ),
-        buffer_size=sac_config["buffer_size"],
-        batch_size=sac_config["batch_size"],
-        learning_starts=sac_config["learning_starts"],
-        train_freq=(sac_config["train_freq_steps"], "step"),
-        gradient_steps=sac_config["gradient_steps"],
-        gamma=sac_config["gamma"],
-        tau=sac_config["tau"],
-        ent_coef=sac_config["ent_coef"],
-        target_update_interval=sac_config["target_update_interval"],
-        use_sde=sac_config["use_sde"],
-        sde_sample_freq=-1,  # Not used when SDE is false
-        learning_rate=linear_schedule(sac_config["initial_lr"]),
         verbose=2,
-        tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
         seed=global_config["seed"],
-        device="auto",
+        tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
     )
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
