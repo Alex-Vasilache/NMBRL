@@ -2,12 +2,33 @@ from typing import Optional, Dict, Any, Callable
 import numpy as np
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
+from gymnasium import spaces
 from dm_control import suite
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 WINDOW_WIDTH = 360
 WINDOW_HEIGHT = 270
+
+
+class DMCVecEnvWrapper(DummyVecEnv):
+    def __init__(
+        self,
+        batch_size: int = 1,
+        max_episode_steps: int = 1000,
+    ):
+        self.batch_size = batch_size
+        super().__init__(
+            [
+                lambda: DMCWrapper(
+                    domain_name="cartpole",
+                    task_name="swingup",
+                    render_mode=None,
+                    max_episode_steps=max_episode_steps,
+                )
+                for _ in range(batch_size)
+            ]
+        )
 
 
 class DMCWrapper(gym.Env):
