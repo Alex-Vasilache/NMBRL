@@ -7,7 +7,6 @@ from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
 
 
-from typing import Callable
 from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.callbacks import (
     EvalCallback,
@@ -41,13 +40,11 @@ def main():
     agent_config = config["agent_trainer"]
     agent_type = agent_config.get("agent_type", "PPO").upper()
 
-    # ─── Directory & Path Setup ──────────────────────────────────────────────────
     # The --world-model-folder is the shared space for all components
     shared_folder = args.world_model_folder
     LOG_DIR = os.path.join(shared_folder, "actor_logs")
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # --- Agent Setup --------------------------------------------------------------
     # Create a temporary real environment just to get the observation and action spaces
     # This env is then closed and not used for training.
     print("--- Creating environment to extract space info ---")
@@ -68,15 +65,6 @@ def main():
         config=config,
     )
 
-    # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
-    def linear_schedule(initial_value: float) -> Callable[[float], float]:
-        """Linear decay from initial_value to zero over training."""
-
-        def lr_fn(progress_remaining: float) -> float:
-            return progress_remaining * initial_value
-
-        return lr_fn
-
     if agent_type == "PPO":
         model = PPO(
             "MlpPolicy",
@@ -96,8 +84,6 @@ def main():
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
 
-    # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
-    # Create evaluation env with identical normalization (without loading any prior stats)
     eval_env = wrapper(
         seed=global_config["seed"],
         n_envs=1,
@@ -119,7 +105,6 @@ def main():
 
     callbacks = CallbackList([eval_callback, checkpoint_callback])
 
-    # ─── 6) TRAINING & SAVING ────────────────────────────────────────────────────
     model.learn(
         total_timesteps=agent_config["total_timesteps"],
         callback=callbacks,
@@ -128,7 +113,6 @@ def main():
 
     # The callbacks handle saving the best model and checkpoints, so a final save is not needed.
 
-    # ─── 7) CLEANUP ─────────────────────────────────────────────────────────────
     train_env.close()
     eval_env.close()
     print("\n[AGENT-TRAINER] Training finished and environments closed.")

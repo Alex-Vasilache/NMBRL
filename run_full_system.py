@@ -3,7 +3,6 @@ import time
 import os
 import threading
 import datetime
-import shutil
 import yaml  # Import the YAML library
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
