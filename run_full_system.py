@@ -82,7 +82,7 @@ def run_system():
     sac_trainer_command = [
         "python",
         "-u",
-        "learning/dynamic_train_sac_cartpole.py",
+        "learning/dynamic_train_agent_sb3.py",
         "--world-model-folder",
         world_model_folder,
         "--config",
