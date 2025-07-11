@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import os
 import argparse
-import yaml  # Import the YAML library
+import yaml
 
+from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
+from utils.tools import seed_everything
 
-
-from stable_baselines3 import SAC, PPO
 from stable_baselines3.common.callbacks import (
     EvalCallback,
     CheckpointCallback,
@@ -20,7 +20,7 @@ def main():
         description="Train an agent using a dynamic world model."
     )
     parser.add_argument(
-        "--world-model-folder",
+        "--shared-folder",
         type=str,
         required=True,
         help="Path to the folder where the trained world model is stored and updated.",
@@ -36,12 +36,16 @@ def main():
     # --- Load configuration from YAML file ---
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
     global_config = config["global"]
     agent_config = config["agent_trainer"]
     agent_type = agent_config.get("agent_type", "PPO").upper()
 
-    # The --world-model-folder is the shared space for all components
-    shared_folder = args.world_model_folder
+    # seed everything
+    seed_everything(global_config["seed"])
+
+    # The --shared-folder is the shared space for all components
+    shared_folder = args.shared_folder
     LOG_DIR = os.path.join(shared_folder, "actor_logs")
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -55,34 +59,22 @@ def main():
     print(f"Obs space: {obs_space}, Action space: {act_space}")
 
     print(
-        f"--- Initializing World Model environment wrapper (monitoring: {args.world_model_folder}) ---"
+        f"--- Initializing World Model environment wrapper (monitoring: {shared_folder}) ---"
     )
     train_env = WorldModelWrapper(
         observation_space=obs_space,
         action_space=act_space,
         batch_size=agent_config["n_envs"],
-        trained_folder=args.world_model_folder,
+        shared_folder=shared_folder,
         config=config,
     )
 
-    if agent_type == "PPO":
-        model = PPO(
-            "MlpPolicy",
-            train_env,
-            verbose=2,
-            seed=global_config["seed"],
-            tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
-        )
-    elif agent_type == "SAC":
-        model = SAC(
-            "MlpPolicy",
-            train_env,
-            verbose=2,
-            seed=global_config["seed"],
-            tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
-        )
-    else:
-        raise ValueError(f"Unknown agent type: {agent_type}")
+    agent = ActorWrapper(
+        env=train_env,
+        config=config,
+        training=True,
+        shared_folder=shared_folder,
+    )
 
     eval_env = wrapper(
         seed=global_config["seed"],
@@ -105,10 +97,10 @@ def main():
 
     callbacks = CallbackList([eval_callback, checkpoint_callback])
 
-    model.learn(
+    agent.learn(
         total_timesteps=agent_config["total_timesteps"],
         callback=callbacks,
-        progress_bar=False,
+        progress_bar=True,
     )
 
     # The callbacks handle saving the best model and checkpoints, so a final save is not needed.

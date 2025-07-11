@@ -9,6 +9,7 @@ import argparse
 import yaml
 from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+from utils.tools import seed_everything
 
 
 def write_to_buffer(buffer_path: str, data: Any) -> None:
@@ -48,7 +49,7 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
     write_data()
 
 
-def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: dict):
+def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config: dict):
     # Create the base environment that the ActorWrapper will manage
     base_env = wrapper(
         seed=config["global"]["seed"],
@@ -59,7 +60,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
 
     # Instantiate the actor wrapper
     actor_wrapper = ActorWrapper(
-        actor_path=actor_path, action_space=base_env.action_space, config=config
+        env=base_env, config=config, training=False, shared_folder=shared_folder
     )
 
     # Initialize state and data buffers from the initial environment
@@ -82,9 +83,9 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
                 continue
 
             # Get the latest actor and environment from the wrapper
-            actor = actor_wrapper.get_actor()
+            actor_model = actor_wrapper.get_model()
 
-            action, _ = actor.predict(state, deterministic=False)
+            action, _ = actor_model.predict(state, deterministic=False)
 
             inp_data[:state_size] = state[0]
             inp_data[state_size] = action[0, 0]
@@ -123,7 +124,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the dynamic data generator.")
     parser.add_argument(
-        "--save-folder",
+        "--shared-folder",
         type=str,
         required=True,
         help="Path to the folder where data will be saved.",
@@ -140,14 +141,14 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    save_folder = args.save_folder
-    buffer_path = os.path.join(save_folder, "buffer.pkl")
-    # The actor path is now the same as the save_folder
-    actor_path = save_folder
-    stop_file_path = os.path.join(save_folder, "stop_signal.tmp")
+    # seed everything
+    seed_everything(config["global"]["seed"])
+
+    shared_folder = args.shared_folder
+    buffer_path = os.path.join(shared_folder, "buffer.pkl")
+    stop_file_path = os.path.join(shared_folder, "stop_signal.tmp")
 
     os.makedirs(os.path.dirname(buffer_path), exist_ok=True)
-    os.makedirs(actor_path, exist_ok=True)
 
     # Clean up stop file from previous runs at startup
     if os.path.exists(stop_file_path):
@@ -170,7 +171,7 @@ if __name__ == "__main__":
     writer_proc.start()
 
     try:
-        main(stop_event, data_queue, actor_path, stop_file_path, config)
+        main(stop_event, data_queue, shared_folder, stop_file_path, config)
     except KeyboardInterrupt:
         print("[GENERATOR] Stopping data generation.")
     finally:

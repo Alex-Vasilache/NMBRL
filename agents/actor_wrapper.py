@@ -1,6 +1,6 @@
 import os
 import threading
-from stable_baselines3 import SAC, PPO
+from stable_baselines3.common.callbacks import CallbackList
 
 
 class RandomPolicy:
@@ -12,6 +12,14 @@ class RandomPolicy:
     def predict(self, obs, deterministic=False):
         return self.action_space.sample().reshape(1, -1), None
 
+    def learn(
+        self,
+        total_timesteps: int,
+        callback: CallbackList = CallbackList([]),
+        progress_bar: bool = False,
+    ):
+        pass
+
 
 class ActorWrapper:
     """
@@ -19,31 +27,72 @@ class ActorWrapper:
     in a non-blocking way using a background thread.
     """
 
-    def __init__(self, actor_path: str, action_space, config: dict):
-        self.actor_path = actor_path
-        self.action_space = action_space
+    def __init__(
+        self,
+        env,
+        config: dict,
+        training: bool = False,
+        shared_folder: str = os.path.join(os.path.dirname(__file__), "..", "runs"),
+    ):
+        self.shared_folder = shared_folder
+        self.agent_folder = os.path.join(self.shared_folder, "actor_logs")
+        self.env = env
         self.config = config
         self.agent_type = (
             self.config.get("agent_trainer", {}).get("agent_type", "PPO").upper()
         )
-
-        self.actor = RandomPolicy(self.action_space)
-
-        self.latest_model_path = None
-
+        self.training = training
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
 
-        # Start the background thread to watch for new models
-        self.model_watcher_thread = threading.Thread(
-            target=self._model_watcher, daemon=True
-        )
-        self.model_watcher_thread.start()
+        if not self.training:
+            self.model = RandomPolicy(self.env.action_space)
+            self.latest_model_path = None
+
+            # Start the background thread to watch for new models
+            self.model_watcher_thread = threading.Thread(
+                target=self._model_watcher, daemon=True
+            )
+            self.model_watcher_thread.start()
+        else:
+            if self.agent_type == "PPO":
+                from stable_baselines3 import PPO
+
+                self.model = PPO(
+                    "MlpPolicy",
+                    self.env,
+                    verbose=2,
+                    seed=self.config["global"]["seed"],
+                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                )
+            elif self.agent_type == "SAC":
+                from stable_baselines3 import SAC
+
+                self.model = SAC(
+                    "MlpPolicy",
+                    self.env,
+                    verbose=2,
+                    seed=self.config["global"]["seed"],
+                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                )
+            else:
+                raise ValueError(f"Unknown agent type: {self.agent_type}")
+
+    def learn(
+        self,
+        total_timesteps: int,
+        callback: CallbackList = CallbackList([]),
+        progress_bar: bool = False,
+    ):
+        if self.training:
+            self.model.learn(total_timesteps, callback, progress_bar)
+        else:
+            raise ValueError("Model is not training, cannot learn.")
 
     def _find_latest_model(self):
         """Finds the latest model .zip"""
         # The Agent trainer saves models in the 'checkpoints' subfolder
-        checkpoints_dir = os.path.join(self.actor_path, "actor_logs", "checkpoints")
+        checkpoints_dir = os.path.join(self.agent_folder, "checkpoints")
         try:
             files_in_dir = os.listdir(checkpoints_dir)
         except (FileNotFoundError, NotADirectoryError):
@@ -76,9 +125,13 @@ class ActorWrapper:
                 # Load the new actor model
                 print(f"[ACTOR-WRAPPER] Loading new {self.agent_type} actor model...")
                 if self.agent_type == "PPO":
-                    new_actor = PPO.load(new_model_path)
+                    from stable_baselines3 import PPO
+
+                    new_model = PPO.load(new_model_path)
                 elif self.agent_type == "SAC":
-                    new_actor = SAC.load(new_model_path)
+                    from stable_baselines3 import SAC
+
+                    new_model = SAC.load(new_model_path)
                 else:
                     print(
                         f"[ACTOR-WRAPPER] Unknown agent type {self.agent_type}, cannot load model."
@@ -88,7 +141,7 @@ class ActorWrapper:
 
                 # Safely update the shared actor and environment
                 with self.lock:
-                    self.actor = new_actor
+                    self.model = new_model
                     self.latest_model_path = new_model_path
 
         except Exception as e:
@@ -100,10 +153,10 @@ class ActorWrapper:
         while not self.stop_event.wait(interval):
             self._check_and_load_new_model()
 
-    def get_actor(self):
-        """Returns the current actor in a thread-safe way."""
+    def get_model(self):
+        """Returns the current model in a thread-safe way."""
         with self.lock:
-            return self.actor
+            return self.model
 
     def close(self):
         """Stops the background model watcher thread."""

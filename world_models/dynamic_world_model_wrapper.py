@@ -20,7 +20,7 @@ class WorldModelWrapper(DummyVecEnv):
         action_space: spaces.Box,
         config: dict,
         batch_size: int = 1,
-        trained_folder: str = "world_models/trained/v1",
+        shared_folder: str = os.path.join(os.path.dirname(__file__), "..", "runs"),
     ):
         # --- Config ---
         self.config = config
@@ -61,8 +61,8 @@ class WorldModelWrapper(DummyVecEnv):
         )
 
         # --- Dynamic Model Loading Setup ---
-        self.model_folder = trained_folder
-        self.model_path = os.path.join(self.model_folder, "model.pth")
+        self.shared_folder = shared_folder
+        self.model_path = os.path.join(self.shared_folder, "model.pth")
         self.nn_model = None
         self.latest_mod_time = None
         self.model_lock = threading.Lock()

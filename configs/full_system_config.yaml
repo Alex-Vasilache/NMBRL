@@ -17,7 +17,7 @@ data_generator:
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 1024
+  new_data_threshold: 128
   watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 512

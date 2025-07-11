@@ -14,6 +14,7 @@ import portalocker
 import threading
 import yaml  # Import the YAML library
 import random
+from utils.tools import seed_everything
 
 
 def train_model(
@@ -266,7 +267,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Run the dynamic world model trainer.")
     parser.add_argument(
-        "--save-folder",
+        "--shared-folder",
         type=str,
         required=True,
         help="Path to the folder where data is buffered and models will be saved.",
@@ -294,12 +295,16 @@ def main():
     # Load configuration from YAML file
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    # seed everything
+    seed_everything(config["global"]["seed"])
+
     trainer_config = config["world_model_trainer"]
     buffer_policy = trainer_config.get("buffer_policy", "latest")  # Default to 'latest'
     batch_size_config = trainer_config.get("batch_size", "all")  # Default to 'all'
 
-    buffer_path = os.path.join(args.save_folder, "buffer.pkl")
-    model_save_path = os.path.join(args.save_folder, "model.pth")
+    buffer_path = os.path.join(args.shared_folder, "buffer.pkl")
+    model_save_path = os.path.join(args.shared_folder, "model.pth")
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
     # Get state and action sizes from arguments

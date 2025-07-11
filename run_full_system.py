@@ -5,6 +5,7 @@ import threading
 import datetime
 import yaml  # Import the YAML library
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+from utils.tools import seed_everything
 
 
 def stream_watcher(identifier, stream):
@@ -29,19 +30,20 @@ def run_system():
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
+    # seed everything
+    seed_everything(config["global"]["seed"])
+
     # Get system run configurations
     run_config = config["run_system"]
     create_new_consoles = run_config.get("create_new_consoles", True)
 
     # 1. Create unique folder for the run
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
-    world_model_folder = os.path.join(run_folder, "world_model_data")
-    os.makedirs(world_model_folder, exist_ok=True)
-    print(f"--- Created unique folder for this run: {run_folder} ---")
-    print(f"--- World model data will be stored in: {world_model_folder} ---")
+    shared_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
+    os.makedirs(shared_folder, exist_ok=True)
+    print(f"--- Created unique folder for this run: {shared_folder} ---")
 
-    stop_file_path = os.path.join(world_model_folder, "stop_signal.tmp")
+    stop_file_path = os.path.join(shared_folder, "stop_signal.tmp")
 
     # --- Get environment dimensions ---
     print("--- Getting environment dimensions ---")
@@ -60,8 +62,8 @@ def run_system():
         "python",
         "-u",
         "learning/dynamic_data_generator.py",
-        "--save-folder",
-        world_model_folder,
+        "--shared-folder",
+        shared_folder,
         "--config",
         config_path,
     ]
@@ -69,8 +71,8 @@ def run_system():
         "python",
         "-u",
         "learning/dynamic_train_world_model.py",
-        "--save-folder",
-        world_model_folder,
+        "--shared-folder",
+        shared_folder,
         "--state-size",
         str(state_size),
         "--action-size",
@@ -82,8 +84,8 @@ def run_system():
         "python",
         "-u",
         "learning/dynamic_train_agent_sb3.py",
-        "--world-model-folder",
-        world_model_folder,
+        "--shared-folder",
+        shared_folder,
         "--config",
         config_path,
     ]
@@ -235,14 +237,14 @@ def run_system():
         print("\n--- Final Run Summary ---")
         print(f"Run folder: {run_folder}")
 
-        world_model_path = os.path.join(world_model_folder, "model.pth")
+        world_model_path = os.path.join(shared_folder, "model.pth")
         if os.path.exists(world_model_path):
             print(f"INFO: Final world model saved at: {world_model_path}")
         else:
             print("WARNING: World model file was not found.")
 
         # Check for the agent model in the new location
-        agent_model_dir = os.path.join(world_model_folder, "actor_models", "best_model")
+        agent_model_dir = os.path.join(shared_folder, "actor_models", "best_model")
         try:
             model_files = [f for f in os.listdir(agent_model_dir) if f.endswith(".zip")]
             if model_files:
