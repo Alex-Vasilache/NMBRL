@@ -35,7 +35,7 @@ class RandomPolicy:
 def find_latest_model(actor_dir: str):
     """Finds the latest model .zip file and the VecNormalize stats .pkl file."""
 
-    # The SAC trainer saves the best model in a specific subfolder
+    # The Agent trainer saves the best model in a specific subfolder
     best_model_dir = os.path.join(actor_dir, "actor_logs", "checkpoints")
     try:
         files_in_dir = os.listdir(best_model_dir)

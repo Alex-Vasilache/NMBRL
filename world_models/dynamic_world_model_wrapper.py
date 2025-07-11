@@ -24,7 +24,7 @@ class WorldModelWrapper(DummyVecEnv):
     ):
         # --- Config ---
         self.config = config
-        wrapper_config = self.config["sac_trainer"]["world_model_wrapper"]
+        wrapper_config = self.config["agent_trainer"]["world_model_wrapper"]
         model_check_interval_s = wrapper_config["model_check_interval_s"]
         obs_clip_range = wrapper_config["obs_clip_range"]
         reward_clip_range = tuple(wrapper_config["reward_clip_range"])

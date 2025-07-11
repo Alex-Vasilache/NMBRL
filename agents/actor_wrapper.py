@@ -16,7 +16,7 @@ class RandomPolicy:
 
 class ActorWrapper:
     """
-    A wrapper class that manages loading and providing the latest SAC actor model
+    A wrapper class that manages loading and providing the latest actor model
     in a non-blocking way using a background thread.
     """
 
@@ -24,6 +24,9 @@ class ActorWrapper:
         self.actor_path = actor_path
         self.base_env = base_env
         self.config = config
+        self.agent_type = (
+            self.config.get("agent_trainer", {}).get("agent_type", "PPO").upper()
+        )
 
         self.active_env = self.base_env
         self.actor = RandomPolicy(self.base_env.action_space)
@@ -42,7 +45,7 @@ class ActorWrapper:
 
     def _find_latest_model(self):
         """Finds the latest model .zip and VecNormalize stats .pkl file."""
-        # The SAC trainer saves models in the 'checkpoints' subfolder
+        # The Agent trainer saves models in the 'checkpoints' subfolder
         checkpoints_dir = os.path.join(self.actor_path, "actor_logs", "checkpoints")
         try:
             files_in_dir = os.listdir(checkpoints_dir)
@@ -79,7 +82,7 @@ class ActorWrapper:
                 new_model_path and new_model_path != self.latest_model_path
             )
 
-            if model_has_changed:
+            if model_has_changed and new_model_path:
                 print(f"[ACTOR-WRAPPER] Found new model: {new_model_path}")
                 env_for_loading = self.base_env
 
@@ -89,9 +92,10 @@ class ActorWrapper:
                     )
                     loaded_env = wrapper.load(new_vecnorm_path, self.base_env)
                     # Configure the loaded environment
-                    try:
-                        loaded_env.venv.render_mode = "human"
-                    except AttributeError:
+                    if hasattr(loaded_env, "venv") and loaded_env.venv is not None:
+                        if hasattr(loaded_env.venv, "render_mode"):
+                            loaded_env.venv.render_mode = "human"
+                    else:
                         print(
                             "[ACTOR-WRAPPER] Could not set render_mode on the loaded environment."
                         )
@@ -100,8 +104,16 @@ class ActorWrapper:
                     env_for_loading = loaded_env
 
                 # Load the new actor model
-                print("[ACTOR-WRAPPER] Loading new actor model...")
-                new_actor = PPO.load(new_model_path, env=env_for_loading)
+                print(f"[ACTOR-WRAPPER] Loading new {self.agent_type} actor model...")
+                if self.agent_type == "PPO":
+                    new_actor = PPO.load(new_model_path, env=env_for_loading)
+                elif self.agent_type == "SAC":
+                    new_actor = SAC.load(new_model_path, env=env_for_loading)
+                else:
+                    print(
+                        f"[ACTOR-WRAPPER] Unknown agent type {self.agent_type}, cannot load model."
+                    )
+                    return
                 print("[ACTOR-WRAPPER] Successfully loaded new actor.")
 
                 # Safely update the shared actor and environment

@@ -18,7 +18,7 @@ from stable_baselines3.common.callbacks import (
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train an SAC agent using a dynamic world model."
+        description="Train an agent using a dynamic world model."
     )
     parser.add_argument(
         "--world-model-folder",
@@ -38,7 +38,8 @@ def main():
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
     global_config = config["global"]
-    sac_config = config["sac_trainer"]
+    agent_config = config["agent_trainer"]
+    agent_type = agent_config.get("agent_type", "PPO").upper()
 
     # ─── Directory & Path Setup ──────────────────────────────────────────────────
     # The --world-model-folder is the shared space for all components
@@ -62,7 +63,7 @@ def main():
     train_env = WorldModelWrapper(
         observation_space=obs_space,
         action_space=act_space,
-        batch_size=sac_config["n_envs"],
+        batch_size=agent_config["n_envs"],
         trained_folder=args.world_model_folder,
         config=config,
     )
@@ -76,40 +77,51 @@ def main():
 
         return lr_fn
 
-    model = PPO(
-        "MlpPolicy",
-        train_env,
-        verbose=2,
-        seed=global_config["seed"],
-        tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
-    )
+    if agent_type == "PPO":
+        model = PPO(
+            "MlpPolicy",
+            train_env,
+            verbose=2,
+            seed=global_config["seed"],
+            tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
+        )
+    elif agent_type == "SAC":
+        model = SAC(
+            "MlpPolicy",
+            train_env,
+            verbose=2,
+            seed=global_config["seed"],
+            tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
+        )
+    else:
+        raise ValueError(f"Unknown agent type: {agent_type}")
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
     eval_env = wrapper(
         seed=global_config["seed"],
         n_envs=1,
-        max_episode_steps=sac_config["max_episode_steps"],
+        max_episode_steps=agent_config["max_episode_steps"],
     )
 
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=os.path.join(LOG_DIR, "best_model"),
         log_path=os.path.join(LOG_DIR, "eval_logs"),
-        eval_freq=sac_config["eval_freq"],
+        eval_freq=agent_config["eval_freq"],
         deterministic=True,
     )
     checkpoint_callback = CheckpointCallback(
-        save_freq=sac_config["checkpoint_freq"],
+        save_freq=agent_config["checkpoint_freq"],
         save_path=os.path.join(LOG_DIR, "checkpoints"),
-        name_prefix="sac_cp",
+        name_prefix=f"{agent_type.lower()}_cp",
     )
 
     callbacks = CallbackList([eval_callback, checkpoint_callback])
 
     # ─── 6) TRAINING & SAVING ────────────────────────────────────────────────────
     model.learn(
-        total_timesteps=sac_config["total_timesteps"],
+        total_timesteps=agent_config["total_timesteps"],
         callback=callbacks,
         progress_bar=False,
     )
@@ -119,7 +131,7 @@ def main():
     # ─── 7) CLEANUP ─────────────────────────────────────────────────────────────
     train_env.close()
     eval_env.close()
-    print("\n[SAC-TRAINER] Training finished and environments closed.")
+    print("\n[AGENT-TRAINER] Training finished and environments closed.")
 
 
 if __name__ == "__main__":

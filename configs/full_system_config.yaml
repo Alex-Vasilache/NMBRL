@@ -31,8 +31,9 @@ world_model_trainer:
   lr_patience: 5
   lr_factor: 0.3
 
-# Configuration for learning/dynamic_train_sac_cartpole.py
-sac_trainer:
+# Configuration for learning/dynamic_train_agent_sb3.py
+agent_trainer:
+  agent_type: "SAC" # "PPO" or "SAC"
   # Environment settings
   n_envs: 16
   max_episode_steps: 1000

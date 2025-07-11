@@ -22,8 +22,8 @@ def run_system():
     Creates a unique folder and runs the full dynamic training system:
     1. Data Generator
     2. World Model Trainer
-    3. SAC Agent Trainer
-    Waits for the SAC agent to finish, then stops the other processes.
+    3. Agent Trainer
+    Waits for the agent to finish, then stops the other processes.
     """
     # --- Load configuration from YAML file ---
     config_path = "configs/full_system_config.yaml"
@@ -79,7 +79,7 @@ def run_system():
         "--config",
         config_path,
     ]
-    sac_trainer_command = [
+    agent_trainer_command = [
         "python",
         "-u",
         "learning/dynamic_train_agent_sb3.py",
@@ -91,7 +91,7 @@ def run_system():
 
     generator_proc = None
     world_model_trainer_proc = None
-    sac_trainer_proc = None
+    agent_trainer_proc = None
     threads = []
 
     # --- Setup subprocess arguments based on console config ---
@@ -128,8 +128,8 @@ def run_system():
         )
         time.sleep(head_start)
 
-        print("\n--- Starting SAC Agent Trainer ---")
-        sac_trainer_proc = subprocess.Popen(sac_trainer_command, **popen_kwargs)
+        print("\n--- Starting Agent Trainer ---")
+        agent_trainer_proc = subprocess.Popen(agent_trainer_command, **popen_kwargs)
 
         # --- Start stream watchers if not using new consoles ---
         if not create_new_consoles:
@@ -150,29 +150,27 @@ def run_system():
                 ),
                 threading.Thread(
                     target=stream_watcher,
-                    args=("SAC-TRAIN-STDOUT", sac_trainer_proc.stdout),
+                    args=("AGENT-TRAIN-STDOUT", agent_trainer_proc.stdout),
                 ),
                 threading.Thread(
                     target=stream_watcher,
-                    args=("SAC-TRAIN-STDERR", sac_trainer_proc.stderr),
+                    args=("AGENT-TRAIN-STDERR", agent_trainer_proc.stderr),
                 ),
             ]
             for t in threads:
                 t.start()
             print("--- Output streaming to this console. ---")
 
-        # 3. Wait for the main SAC training process to complete
-        print(
-            "\n--- Processes started. Waiting for SAC Agent Trainer to complete... ---\n"
-        )
+        # 3. Wait for the main  training process to complete
+        print("\n--- Processes started. Waiting for Agent Trainer to complete... ---\n")
         try:
             # Poll the process to see if it has finished. This non-blocking
             # wait allows the main script to catch the KeyboardInterrupt.
-            while sac_trainer_proc.poll() is None:
+            while agent_trainer_proc.poll() is None:
                 time.sleep(1)
 
             # If the loop exits, the process has finished.
-            print("\n--- SAC Agent Trainer finished. ---")
+            print("\n--- Agent Trainer finished. ---")
         except KeyboardInterrupt:
             print("\n--- Ctrl-C detected. Initiating shutdown... ---")
             # The 'finally' block will handle the cleanup.
@@ -192,9 +190,9 @@ def run_system():
             print("--- Terminating world model trainer ---")
             world_model_trainer_proc.terminate()
 
-        if sac_trainer_proc and sac_trainer_proc.poll() is None:
-            print("--- Terminating SAC trainer ---")
-            sac_trainer_proc.terminate()
+        if agent_trainer_proc and agent_trainer_proc.poll() is None:
+            print("--- Terminating Agent trainer ---")
+            agent_trainer_proc.terminate()
 
         # 5. Wait for termination
         if generator_proc:
@@ -217,14 +215,14 @@ def run_system():
                 print("--- Trainer did not terminate. Force killing. ---")
                 world_model_trainer_proc.kill()
 
-        if sac_trainer_proc:
-            print("--- Waiting for SAC trainer to terminate... ---")
+        if agent_trainer_proc:
+            print("--- Waiting for Agent trainer to terminate... ---")
             try:
-                sac_trainer_proc.wait(timeout=10)
-                print("--- SAC trainer terminated. ---")
+                agent_trainer_proc.wait(timeout=10)
+                print("--- Agent trainer terminated. ---")
             except subprocess.TimeoutExpired:
-                print("--- SAC trainer did not terminate. Force killing. ---")
-                sac_trainer_proc.kill()
+                print("--- Agent trainer did not terminate. Force killing. ---")
+                agent_trainer_proc.kill()
 
         # Join threads to capture all output if they were started
         if threads:
@@ -244,16 +242,16 @@ def run_system():
         else:
             print("WARNING: World model file was not found.")
 
-        # Check for the SAC model in the new location
-        sac_model_dir = os.path.join(world_model_folder, "actor_models", "best_model")
+        # Check for the agent model in the new location
+        agent_model_dir = os.path.join(world_model_folder, "actor_models", "best_model")
         try:
-            model_files = [f for f in os.listdir(sac_model_dir) if f.endswith(".zip")]
+            model_files = [f for f in os.listdir(agent_model_dir) if f.endswith(".zip")]
             if model_files:
-                print(f"INFO: SAC agent best model saved in: {sac_model_dir}")
+                print(f"INFO: Agent best model saved in: {agent_model_dir}")
             else:
-                print("WARNING: Could not find a saved SAC agent model (.zip).")
+                print("WARNING: Could not find a saved Agent model (.zip).")
         except FileNotFoundError:
-            print("WARNING: SAC agent model directory was not found.")
+            print("WARNING: Agent model directory was not found.")
 
         print("\n--- Full system run finished ---")
 
