@@ -12,17 +12,17 @@ run_system:
 data_generator:
   max_episode_steps: 2000
   actor_check_interval_seconds: 1
-  buffer_write_interval_seconds: 1
+  buffer_write_interval_seconds: 3
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 100
-  watcher_interval_seconds: 1
+  new_data_threshold: 4000
+  watcher_interval_seconds: 3
   # Model architecture
   hidden_dim: 2048
   # Training parameters
-  buffer_policy: "latest" # "latest" or "random"
+  buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
   learning_rate: 0.00001
@@ -41,7 +41,7 @@ agent_trainer:
   total_timesteps: 10000000
   # Callback settings
   checkpoint_freq: 1000
-  verbose: 1
+  verbose: 0
 
   # Settings for the world model wrapper used by the SAC agent
   world_model_wrapper:

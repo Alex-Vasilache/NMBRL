@@ -233,6 +233,70 @@ def pop_data_from_buffer(buffer_path):
         return []
 
 
+def pop_n_oldest_from_buffer(buffer_path, n):
+    """
+    Reads the N oldest items from the buffer file, removes them from the buffer,
+    and returns them. The remaining items stay in the buffer.
+    Uses file locking to prevent race conditions.
+
+    Parameters:
+    - buffer_path: Path to the buffer file
+    - n: Number of oldest items to pop
+
+    Returns:
+    - List of the N oldest items, or empty list if not enough data
+    """
+    if not os.path.exists(buffer_path) or os.path.getsize(buffer_path) == 0:
+        return []
+
+    try:
+        with portalocker.Lock(buffer_path, "rb+", timeout=5) as f:
+            all_data = []
+            while True:
+                try:
+                    # Load all pickled objects from the file
+                    all_data.extend(pickle.load(f))
+                except EOFError:
+                    break
+                except pickle.UnpicklingError:
+                    # This can happen if the writer is in the middle of writing.
+                    # We'll just try again later.
+                    print(
+                        "[TRAINER] Warning: Encountered a partial write. Skipping this read attempt."
+                    )
+                    return []
+
+            # Check if we have enough data
+            if len(all_data) < n:
+                print(
+                    f"[TRAINER] Not enough data in buffer ({len(all_data)} < {n}). Skipping."
+                )
+                return []
+
+            # Take the first N items (oldest)
+            items_to_return = all_data[:n]
+            # Keep the remaining items
+            remaining_items = all_data[n:]
+
+            # Write back the remaining items
+            f.seek(0)
+            f.truncate()
+            if remaining_items:
+                # Write remaining items back as a single chunk
+                pickle.dump(remaining_items, f)
+
+            return items_to_return
+
+    except portalocker.exceptions.LockException:
+        print(
+            "[TRAINER] Could not acquire lock on buffer file, another process is using it."
+        )
+        return []
+    except Exception as e:
+        print(f"[TRAINER] An unexpected error occurred while reading the buffer: {e}")
+        return []
+
+
 def sample_data_from_buffer(buffer_path, sample_size):
     """
     Reads all data from the buffer file and returns a random sample of it.
@@ -348,7 +412,9 @@ def main():
     seed_everything(config["global"]["seed"])
 
     trainer_config = config["world_model_trainer"]
-    buffer_policy = trainer_config.get("buffer_policy", "latest")  # Default to 'latest'
+    buffer_policy = trainer_config.get(
+        "buffer_policy", "latest"
+    )  # Options: 'latest', 'oldest_n', 'random'
     batch_size_config = trainer_config.get("batch_size", "all")  # Default to 'all'
 
     buffer_path = os.path.join(args.shared_folder, "buffer.pkl")
@@ -392,7 +458,13 @@ def main():
 
         # Pop or sample data based on the configured policy
         if buffer_policy == "latest":
+            # Take all data from buffer (legacy behavior)
             new_data = pop_data_from_buffer(buffer_path)
+        elif buffer_policy == "oldest_n":
+            # Take exactly N oldest items from buffer
+            new_data = pop_n_oldest_from_buffer(
+                buffer_path, trainer_config["new_data_threshold"]
+            )
         elif buffer_policy == "random":
             # The threshold is now the sample size for random sampling
             new_data = sample_data_from_buffer(
@@ -440,7 +512,7 @@ def main():
             raise ValueError(f"Invalid batch size configuration: {batch_size_config}")
 
         print(
-            f"\n[TRAINER] --- Starting training on {len(training_inp)} records (batch size: {batch_size_config}) ---"
+            f"\n[TRAINER] --- Starting training on {len(training_inp)} records (batch size: {batch_size_config}, policy: {buffer_policy}) ---"
         )
 
         # The watcher thread is still running. We need to clear the event again

@@ -225,7 +225,7 @@ class WorldModelWrapper(DummyVecEnv):
 
             if self.step_count >= self.max_episode_steps:
                 self.terminated = np.ones(self.num_envs, dtype=bool)
-                print(f"[{datetime.now()}] Terminated after {self.step_count} steps")
+                # print(f"[{datetime.now()}] Terminated after {self.step_count} steps")
                 self.infos = [{"terminal_observation": t} for t in self.state]
                 next_state_tensor = torch.from_numpy(self.reset())
 
