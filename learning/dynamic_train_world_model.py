@@ -87,9 +87,12 @@ def train_model(
     train_losses = []
     val_losses = []
 
+    output_dim = model.output_dim
+
     for epoch in range(num_epochs):
         model.train()  # Set the model to training mode
         epoch_train_loss = 0.0
+        epoch_train_sq_err_per_dim = torch.zeros(output_dim)
 
         for inputs, targets in train_loader:
             optimizer.zero_grad()  # Zero the gradients
@@ -99,6 +102,9 @@ def train_model(
             optimizer.step()  # Update weights
 
             epoch_train_loss += loss.item() * inputs.size(0)  # Accumulate loss
+            epoch_train_sq_err_per_dim += torch.sum(
+                (outputs.detach() - targets.detach()) ** 2, dim=0
+            )
 
         # Average training loss for the epoch
         epoch_train_loss /= len(X_train)
@@ -107,12 +113,16 @@ def train_model(
         # Validation loss computation
         model.eval()  # Set the model to evaluation mode
         epoch_val_loss = 0.0
+        all_val_outputs = []
+        all_val_targets = []
 
         with torch.no_grad():  # No gradient computation during validation
             for inputs, targets in val_loader:
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
                 epoch_val_loss += loss.item() * inputs.size(0)
+                all_val_outputs.append(outputs)
+                all_val_targets.append(targets)
 
         # Average validation loss for the epoch
         epoch_val_loss /= len(X_val)
@@ -122,19 +132,52 @@ def train_model(
         val_losses.append(epoch_val_loss)
 
         # --- Calculate percentage errors ---
+        # --- Training errors (overall and per-dimension) ---
         train_rmse = np.sqrt(epoch_train_loss)
         train_err_perc = (
             train_rmse / (torch.mean(torch.abs(y_train_tensor)) + 1e-8)
         ) * 100
 
+        epoch_train_mse_per_dim = epoch_train_sq_err_per_dim / len(X_train)
+        train_rmse_per_dim = torch.sqrt(epoch_train_mse_per_dim)
+        mean_abs_train_per_dim = torch.mean(torch.abs(y_train_tensor), dim=0)
+        train_err_perc_per_dim = (
+            train_rmse_per_dim / (mean_abs_train_per_dim + 1e-8)
+        ) * 100
+
+        # --- Validation errors (overall and per-dimension) ---
+        all_val_outputs = torch.cat(all_val_outputs, dim=0)
+        all_val_targets = torch.cat(all_val_targets, dim=0)
+
         val_rmse = np.sqrt(epoch_val_loss)
-        val_err_perc = (val_rmse / (torch.mean(torch.abs(y_val_tensor)) + 1e-8)) * 100
+        val_err_perc = (
+            val_rmse / (torch.mean(torch.abs(all_val_targets)) + 1e-8)
+        ) * 100
+
+        val_mse_per_dim = torch.mean((all_val_outputs - all_val_targets) ** 2, dim=0)
+        val_rmse_per_dim = torch.sqrt(val_mse_per_dim)
+        mean_abs_val_per_dim = torch.mean(torch.abs(all_val_targets), dim=0)
+        val_err_perc_per_dim = (val_rmse_per_dim / (mean_abs_val_per_dim + 1e-8)) * 100
+
+        # --- Format error strings for printing ---
+        state_size = model.state_size
+        train_dim_error_strs = []
+        val_dim_error_strs = []
+
+        for i in range(state_size):
+            train_dim_error_strs.append(f"St_{i}: {train_err_perc_per_dim[i]:.2f}%")
+            val_dim_error_strs.append(f"St_{i}: {val_err_perc_per_dim[i]:.2f}%")
+
+        train_dim_error_strs.append(f"R: {train_err_perc_per_dim[state_size]:.2f}%")
+        val_dim_error_strs.append(f"R: {val_err_perc_per_dim[state_size]:.2f}%")
 
         current_lr = optimizer.param_groups[0]["lr"]
-        if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == num_epochs - 1:
+        if (epoch + 1) % 20 == 0 or epoch == 0 or epoch == num_epochs - 1:
             print(
-                f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.6f} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.6f} ({val_err_perc:.2f}%), LR: {current_lr:.6f}"
+                f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.1e} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.1e} ({val_err_perc:.2f}%), LR: {current_lr:.1e}"
             )
+            print(f"    Train Err (%): " + ", ".join(train_dim_error_strs))
+            print(f"    Val Err (%):   " + ", ".join(val_dim_error_strs))
 
         # Check for external stop signal
         if stop_event and stop_event.is_set():
