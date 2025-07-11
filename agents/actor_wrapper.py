@@ -61,7 +61,7 @@ class ActorWrapper:
                 self.model = PPO(
                     "MlpPolicy",
                     self.env,
-                    verbose=2,
+                    verbose=self.config["agent_trainer"]["verbose"],
                     seed=self.config["global"]["seed"],
                     tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
                 )
@@ -71,7 +71,7 @@ class ActorWrapper:
                 self.model = SAC(
                     "MlpPolicy",
                     self.env,
-                    verbose=2,
+                    verbose=self.config["agent_trainer"]["verbose"],
                     seed=self.config["global"]["seed"],
                     tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
                 )

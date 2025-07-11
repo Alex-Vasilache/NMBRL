@@ -39,6 +39,7 @@ class WorldModelWrapper(DummyVecEnv):
         self.action_size = self.action_space.shape[0]
         self.terminated = np.zeros(batch_size, dtype=bool)
         self.infos = [{} for _ in range(batch_size)]
+        self.max_episode_steps = self.config["agent_trainer"]["max_episode_steps"]
 
         # --- Clipping Ranges ---
         self.obs_clip_range = obs_clip_range
@@ -218,6 +219,16 @@ class WorldModelWrapper(DummyVecEnv):
             next_state_tensor = outputs[:, : self.state_size]
             reward_tensor = outputs[:, self.state_size]
 
+            self.step_count += 1
+            self.infos = [{} for _ in range(self.num_envs)]
+            self.terminated = np.zeros(self.num_envs, dtype=bool)
+
+            if self.step_count >= self.max_episode_steps:
+                self.terminated = np.ones(self.num_envs, dtype=bool)
+                print(f"[{datetime.now()}] Terminated after {self.step_count} steps")
+                self.infos = [{"terminal_observation": t} for t in self.state]
+                next_state_tensor = torch.from_numpy(self.reset())
+
             # --- NaN/inf check and clamping ---
             if (
                 torch.isnan(next_state_tensor).any()
@@ -267,9 +278,7 @@ class WorldModelWrapper(DummyVecEnv):
                 torch.from_numpy(self.observation_space.sample()).float().unsqueeze(0)
             )
 
-        print(f"[{datetime.now()}] Resetting state to {self.state}")
-        self.terminated = np.zeros(self.num_envs, dtype=bool)
-        self.infos = [{} for _ in range(self.num_envs)]
+        self.step_count = 0
         return self.state.numpy()
 
     def set_state(self, state_np: np.ndarray):
