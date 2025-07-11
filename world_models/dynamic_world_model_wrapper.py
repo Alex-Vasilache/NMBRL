@@ -5,6 +5,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import torch
+import torch.serialization
 from stable_baselines3.common.vec_env import DummyVecEnv
 from networks.world_model_v1 import SimpleModel
 import os
@@ -129,19 +130,19 @@ class WorldModelWrapper(DummyVecEnv):
             action_size=self.action_size,
         )
 
-    def _create_placeholder_model(self):
-        """Creates a model that always returns zeros."""
-
-        class PlaceholderModel(torch.nn.Module):
-            def __init__(self, output_dim):
-                super().__init__()
-                self.output_dim = output_dim
-                self.valid_init_state = torch.zeros(output_dim - 1)
-
-            def forward(self, x):
-                return torch.zeros(x.shape[0], self.output_dim)
-
-        return PlaceholderModel(self.state_size + 1)
+    # def _create_placeholder_model(self):
+    #     """Creates a model that always returns zeros."""
+    #
+    #     class PlaceholderModel(torch.nn.Module):
+    #         def __init__(self, output_dim):
+    #             super().__init__()
+    #             self.output_dim = output_dim
+    #             self.valid_init_state = torch.zeros(self.num_envs, output_dim - 1)
+    #
+    #         def forward(self, x):
+    #             return torch.zeros(x.shape[0], self.output_dim)
+    #
+    #     return PlaceholderModel(self.state_size + 1)
 
     def _find_and_load_model_if_new(self):
         """Checks for a new model file and loads it if it's newer than the current one."""
@@ -158,10 +159,14 @@ class WorldModelWrapper(DummyVecEnv):
                 # Wait briefly to prevent loading a partially written file
                 time.sleep(0.5)
 
-                new_model = self._create_model_instance()
+                # new_model = self._create_model_instance()
                 # Load onto CPU to avoid potential CUDA initialization issues in the thread
-                new_model.load_state_dict(
-                    torch.load(self.model_path, map_location="cpu")
+                # new_model.load_state_dict(
+                #     torch.load(self.model_path, map_location="cpu")
+                # )
+                torch.serialization.add_safe_globals([SimpleModel])
+                new_model = torch.load(
+                    self.model_path, map_location="cpu", weights_only=False
                 )
                 new_model.eval()  # Set to evaluation mode
 
@@ -202,6 +207,10 @@ class WorldModelWrapper(DummyVecEnv):
         with torch.no_grad(), self.model_lock:
             if self.state is None:
                 raise RuntimeError("Must call reset() or set_state() before step().")
+
+            if self.nn_model is None:
+                # This should not happen if __init__ completed successfully.
+                raise RuntimeError("World model is not loaded, cannot step.")
 
             nn_input = torch.cat([self.state, action_tensor], dim=1)
             outputs = self.nn_model(nn_input)
@@ -245,9 +254,20 @@ class WorldModelWrapper(DummyVecEnv):
         if seed is not None:
             super().seed(seed)
             torch.manual_seed(seed)
-        viable_init_state = self.nn_model.valid_init_state.repeat(self.num_envs, 1)
-        random_offset = torch.randn(self.num_envs, 1) * 0.01
-        self.state = viable_init_state + random_offset
+
+        # It's possible to be reset before the first model is loaded and has a valid init state
+        if self.nn_model is not None and self.nn_model.valid_init_state is not None:
+            random_idxs = np.random.randint(
+                0, self.nn_model.valid_init_state.shape[0], self.num_envs
+            )
+            self.state = self.nn_model.valid_init_state[random_idxs]
+        else:
+            # Fallback to a random state if the model or its buffer isn't ready
+            self.state = (
+                torch.from_numpy(self.observation_space.sample()).float().unsqueeze(0)
+            )
+
+        print(f"[{datetime.now()}] Resetting state to {self.state}")
         self.terminated = np.zeros(self.num_envs, dtype=bool)
         self.infos = [{} for _ in range(self.num_envs)]
         return self.state.numpy()

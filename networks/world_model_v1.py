@@ -43,7 +43,8 @@ class SimpleModel(nn.Module):
         self.output = nn.Linear(hidden_dim, output_dim)  # Output layer
         self.state_scaler = state_scaler
         self.action_scaler = action_scaler
-        self.valid_init_state = torch.zeros(output_dim - 1)
+        # self.register_buffer("valid_init_state", torch.zeros(output_dim - 1))
+        self.valid_init_state = None
 
     def forward(self, x, use_input_scaler=False, use_output_scaler=False):
         if use_input_scaler:

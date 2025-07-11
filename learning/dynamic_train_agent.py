@@ -94,7 +94,6 @@ def main():
     # The callbacks handle saving the best model and checkpoints, so a final save is not needed.
 
     train_env.close()
-    eval_env.close()
     print("\n[AGENT-TRAINER] Training finished and environments closed.")
 
 
