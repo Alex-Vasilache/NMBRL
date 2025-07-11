@@ -5,7 +5,7 @@ global:
 
 # Configuration for the main run_full_system.py script
 run_system:
-  head_start_seconds: 10
+  head_start_seconds: 1
   create_new_consoles: true # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
@@ -17,29 +17,29 @@ data_generator:
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 1024
+  new_data_threshold: 4096
   watcher_interval_seconds: 1
   # Model architecture
-  hidden_dim: 64
+  hidden_dim: 256
   # Training parameters
   buffer_policy: "latest" # "latest" or "random"
-  batch_size: 64 # "all" or an integer value
+  batch_size: 512 # "all" or an integer value
   epochs_per_cycle: 10000
   learning_rate: 0.00001
   validation_split: 0.2
   # Learning rate scheduler settings
-  lr_patience: 5
+  lr_patience: 10
   lr_factor: 0.3
 
 # Configuration for learning/dynamic_train_sac_cartpole.py
 sac_trainer:
   # Environment settings
-  n_envs: 64
+  n_envs: 32
   max_episode_steps: 1000
   # Training run settings
   total_timesteps: 1000000
   # Model architecture
-  net_arch: [64, 64]
+  net_arch: [128, 128]
   # SAC Hyperparameters
   batch_size: 64
   buffer_size: 100000
@@ -49,12 +49,12 @@ sac_trainer:
   tau: 0.01
   ent_coef: "auto"
   target_update_interval: 1
-  gradient_steps: 4
+  gradient_steps: 8
   train_freq_steps: 1 # Corresponds to train_freq=(1, "step")
   use_sde: False
   # Callback settings
   eval_freq: 1000
-  checkpoint_freq: 1000
+  checkpoint_freq: 500
   # Settings for the world model wrapper used by the SAC agent
   world_model_wrapper:
     model_check_interval_s: 1

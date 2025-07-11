@@ -165,25 +165,36 @@ def run_system():
         print(
             "\n--- Processes started. Waiting for SAC Agent Trainer to complete... ---\n"
         )
-        # The main script's console will now wait here. The other processes
-        # will continue to run in their own windows.
-        sac_trainer_proc.wait()
-        print("\n--- SAC Agent Trainer finished. ---")
+        try:
+            # Poll the process to see if it has finished. This non-blocking
+            # wait allows the main script to catch the KeyboardInterrupt.
+            while sac_trainer_proc.poll() is None:
+                time.sleep(1)
+
+            # If the loop exits, the process has finished.
+            print("\n--- SAC Agent Trainer finished. ---")
+        except KeyboardInterrupt:
+            print("\n--- Ctrl-C detected. Initiating shutdown... ---")
+            # The 'finally' block will handle the cleanup.
 
     finally:
         print("\n--- Initiating shutdown sequence ---")
 
-        # 4. Signal generator to stop and terminate world model trainer
+        # 4. Signal all processes to stop
         if generator_proc and generator_proc.poll() is None:
             print(
                 f"--- Stopping data generator by creating stop file: {stop_file_path} ---"
             )
             with open(stop_file_path, "w") as f:
-                pass
+                pass  # Create the stop file
 
         if world_model_trainer_proc and world_model_trainer_proc.poll() is None:
             print("--- Terminating world model trainer ---")
             world_model_trainer_proc.terminate()
+
+        if sac_trainer_proc and sac_trainer_proc.poll() is None:
+            print("--- Terminating SAC trainer ---")
+            sac_trainer_proc.terminate()
 
         # 5. Wait for termination
         if generator_proc:
@@ -205,6 +216,15 @@ def run_system():
             except subprocess.TimeoutExpired:
                 print("--- Trainer did not terminate. Force killing. ---")
                 world_model_trainer_proc.kill()
+
+        if sac_trainer_proc:
+            print("--- Waiting for SAC trainer to terminate... ---")
+            try:
+                sac_trainer_proc.wait(timeout=10)
+                print("--- SAC trainer terminated. ---")
+            except subprocess.TimeoutExpired:
+                print("--- SAC trainer did not terminate. Force killing. ---")
+                sac_trainer_proc.kill()
 
         # Join threads to capture all output if they were started
         if threads:
