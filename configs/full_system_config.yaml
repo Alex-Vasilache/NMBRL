@@ -6,7 +6,7 @@ global:
 # Configuration for the main run_full_system.py script
 run_system:
   head_start_seconds: 1
-  create_new_consoles: false # If false, output will be piped to the main console
+  create_new_consoles: true # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
@@ -40,7 +40,6 @@ agent_trainer:
   # Training run settings
   total_timesteps: 100000
   # Callback settings
-  eval_freq: 1000
   checkpoint_freq: 500
 
   # Settings for the world model wrapper used by the SAC agent

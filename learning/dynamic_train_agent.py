@@ -77,26 +77,13 @@ def main():
         shared_folder=shared_folder,
     )
 
-    eval_env = wrapper(
-        seed=global_config["seed"],
-        n_envs=1,
-        max_episode_steps=agent_config["max_episode_steps"],
-    )
-
-    eval_callback = EvalCallback(
-        eval_env,
-        best_model_save_path=os.path.join(LOG_DIR, "best_model"),
-        log_path=os.path.join(LOG_DIR, "eval_logs"),
-        eval_freq=agent_config["eval_freq"],
-        deterministic=True,
-    )
     checkpoint_callback = CheckpointCallback(
         save_freq=agent_config["checkpoint_freq"],
         save_path=os.path.join(LOG_DIR, "checkpoints"),
         name_prefix=f"{agent_type.lower()}_cp",
     )
 
-    callbacks = CallbackList([eval_callback, checkpoint_callback])
+    callbacks = CallbackList([checkpoint_callback])
 
     agent.learn(
         total_timesteps=agent_config["total_timesteps"],

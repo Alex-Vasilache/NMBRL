@@ -244,6 +244,7 @@ class WorldModelWrapper(DummyVecEnv):
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             super().seed(seed)
+            torch.manual_seed(seed)
         viable_init_state = self.nn_model.valid_init_state.repeat(self.num_envs, 1)
         random_offset = torch.randn(self.num_envs, 1) * 0.01
         self.state = viable_init_state + random_offset
