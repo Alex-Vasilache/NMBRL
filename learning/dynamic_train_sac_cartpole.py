@@ -3,6 +3,7 @@ import os
 import random
 from datetime import datetime
 import argparse
+import yaml  # Import the YAML library
 
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
@@ -19,18 +20,6 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
 )
 
-# ─── 0) CONFIGURATION ─────────────────────────────────────────────────────────
-
-SEED = 42
-N_ENVS = 32
-TOTAL_TIMESTEPS = 1_000_000
-
-NET_ARCH = [64, 64]
-BATCH_SIZE = 64
-INITIAL_LR = 1e-4
-
-MAX_EPISODE_STEPS = 1000
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -42,7 +31,19 @@ def main():
         required=True,
         help="Path to the folder where the trained world model is stored and updated.",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the YAML configuration file.",
+    )
     args = parser.parse_args()
+
+    # --- Load configuration from YAML file ---
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+    global_config = config["global"]
+    sac_config = config["sac_trainer"]
 
     # ─── Directory & Path Setup ──────────────────────────────────────────────────
     # The --world-model-folder is the shared space for all components
@@ -54,7 +55,7 @@ def main():
     # Create a temporary real environment just to get the observation and action spaces
     # This env is then closed and not used for training.
     print("--- Creating environment to extract space info ---")
-    temp_real_env = wrapper(seed=SEED, n_envs=1)
+    temp_real_env = wrapper(seed=global_config["seed"], n_envs=1)
     obs_space = temp_real_env.observation_space
     act_space = temp_real_env.action_space
     temp_real_env.close()
@@ -66,8 +67,9 @@ def main():
     train_env = WorldModelWrapper(
         observation_space=obs_space,
         action_space=act_space,
-        batch_size=N_ENVS,
+        batch_size=sac_config["n_envs"],
         trained_folder=args.world_model_folder,
+        config=config,
     )
 
     # ─── 4) MODEL SETUP ───────────────────────────────────────────────────────────
@@ -82,38 +84,45 @@ def main():
     model = SAC(
         "MlpPolicy",
         train_env,
-        policy_kwargs=dict(net_arch=NET_ARCH, log_std_init=-3),
-        buffer_size=100_000,
-        batch_size=BATCH_SIZE,
-        learning_starts=1_000,
-        train_freq=(1, "step"),
-        gradient_steps=1,
-        gamma=0.98,
-        tau=0.02,
-        ent_coef="auto",
-        target_update_interval=1,
-        use_sde=False,  # Disable SDE for more stable training
+        policy_kwargs=dict(
+            net_arch=sac_config["net_arch"],
+            log_std_init=-3,
+        ),
+        buffer_size=sac_config["buffer_size"],
+        batch_size=sac_config["batch_size"],
+        learning_starts=sac_config["learning_starts"],
+        train_freq=(sac_config["train_freq_steps"], "step"),
+        gradient_steps=sac_config["gradient_steps"],
+        gamma=sac_config["gamma"],
+        tau=sac_config["tau"],
+        ent_coef=sac_config["ent_coef"],
+        target_update_interval=sac_config["target_update_interval"],
+        use_sde=sac_config["use_sde"],
         sde_sample_freq=-1,  # Not used when SDE is false
-        learning_rate=linear_schedule(INITIAL_LR),
-        verbose=1,
+        learning_rate=linear_schedule(sac_config["initial_lr"]),
+        verbose=2,
         tensorboard_log=os.path.join(LOG_DIR, "tensorboard"),
-        seed=SEED,
+        seed=global_config["seed"],
         device="auto",
     )
 
     # ─── 5) CALLBACKS & EVAL ENV ───────────────────────────────────────────────────
     # Create evaluation env with identical normalization (without loading any prior stats)
-    eval_env = wrapper(seed=SEED, n_envs=1, max_episode_steps=MAX_EPISODE_STEPS)
+    eval_env = wrapper(
+        seed=global_config["seed"],
+        n_envs=1,
+        max_episode_steps=sac_config["max_episode_steps"],
+    )
 
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=os.path.join(LOG_DIR, "best_model"),
         log_path=os.path.join(LOG_DIR, "eval_logs"),
-        eval_freq=1_000,
+        eval_freq=sac_config["eval_freq"],
         deterministic=True,
     )
     checkpoint_callback = CheckpointCallback(
-        save_freq=1_000,
+        save_freq=sac_config["checkpoint_freq"],
         save_path=os.path.join(LOG_DIR, "checkpoints"),
         name_prefix="sac_cp",
     )
@@ -121,7 +130,11 @@ def main():
     callbacks = CallbackList([eval_callback, checkpoint_callback])
 
     # ─── 6) TRAINING & SAVING ────────────────────────────────────────────────────
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callbacks, progress_bar=False)
+    model.learn(
+        total_timesteps=sac_config["total_timesteps"],
+        callback=callbacks,
+        progress_bar=False,
+    )
 
     # The callbacks handle saving the best model and checkpoints, so a final save is not needed.
 

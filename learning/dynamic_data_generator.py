@@ -7,6 +7,7 @@ import multiprocessing
 import portalocker
 import queue  # For queue.Empty exception
 import argparse
+import yaml  # Import the YAML library
 from stable_baselines3 import SAC
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
@@ -36,13 +37,10 @@ def find_latest_model(actor_dir: str):
     """Finds the latest model .zip file and the VecNormalize stats .pkl file."""
 
     # The SAC trainer saves the best model in a specific subfolder
-    best_model_dir = os.path.join(actor_dir, "actor_logs", "best_model")
+    best_model_dir = os.path.join(actor_dir, "actor_logs", "checkpoints")
     try:
         files_in_dir = os.listdir(best_model_dir)
     except (FileNotFoundError, NotADirectoryError):
-        print(
-            f"[GENERATOR] Info: Actor directory not found or is invalid. This is expected if no model has been saved yet: '{best_model_dir}'"
-        )
         return None, None
 
     model_files = [
@@ -98,11 +96,14 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
     write_data()
 
 
-def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
-    max_episode_steps = 10000
+def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: dict):
+    max_episode_steps = config["data_generator"]["max_episode_steps"]
 
     env = wrapper(
-        seed=42, n_envs=1, render_mode="human", max_episode_steps=max_episode_steps
+        seed=config["global"]["seed"],
+        n_envs=1,
+        render_mode="human",
+        max_episode_steps=max_episode_steps,
     )
 
     state = env.reset()
@@ -118,7 +119,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
     # -- Load initial actor --
     actor = RandomPolicy(env.action_space)
     latest_model_path = None
-    check_interval = 5  # seconds
+    check_interval = config["data_generator"]["actor_check_interval_seconds"]
     last_check_time = time.time()
 
     while not stop_event.is_set():
@@ -130,7 +131,6 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
         # -- Periodically check for a new actor --
         if time.time() - last_check_time > check_interval:
             new_model_path, vec_normalize_path = find_latest_model(actor_path)
-            print(f"[GENERATOR] New model path: {new_model_path}")
             last_check_time = time.time()
 
             if new_model_path and new_model_path != latest_model_path:
@@ -142,10 +142,20 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
                     print(
                         f"[GENERATOR] Loading VecNormalize stats from: {vec_normalize_path}"
                     )
-                    env = wrapper.load(vec_normalize_path, env)
-                    env.venv.render_mode = "human"
-                    env.training = False
-                    env.norm_reward = False
+                    # The environment returned by wrapper.load is the VecNormalize environment
+                    # We need to set the render_mode on the underlying environment if possible
+                    loaded_env = wrapper.load(vec_normalize_path, env)
+                    try:
+                        loaded_env.venv.render_mode = "human"
+                    except AttributeError:
+                        # This might happen if the environment is not a DummyVecEnv/SubprocVecEnv
+                        # It's a best-effort attempt.
+                        print(
+                            "[GENERATOR] Could not set render_mode on the loaded environment."
+                        )
+                    loaded_env.training = False
+                    loaded_env.norm_reward = False
+                    env = loaded_env
 
                 # Load the new actor
                 try:
@@ -155,10 +165,11 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
                     print(f"[GENERATOR] Error loading actor: {e}. Using random policy.")
                     actor = RandomPolicy(env.action_space)
 
-        action, _ = actor.predict(state, deterministic=True)
+        action, _ = actor.predict(state, deterministic=False)
 
         inp_data[:state_size] = state[0]
         inp_data[state_size] = action[0, 0]
+        # We need to handle the case where info is a list of dicts
         next_state, reward, terminated, info = env.step(action)
 
         outp_data[:state_size] = next_state[0]
@@ -168,7 +179,10 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str):
 
         env.render()
 
-        if info[0].get("sim_should_stop", False):
+        # Handle info being a list of dicts for VecEnv
+        sim_should_stop = info[0].get("sim_should_stop", False)
+
+        if sim_should_stop:
             print("[GENERATOR] Render window closed by user, stopping generation.")
             stop_event.set()
 
@@ -195,7 +209,17 @@ if __name__ == "__main__":
         required=True,
         help="Path to the folder where data will be saved.",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the YAML configuration file.",
+    )
     args = parser.parse_args()
+
+    # Load configuration from YAML file
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
 
     save_folder = args.save_folder
     buffer_path = os.path.join(save_folder, "buffer.pkl")
@@ -213,13 +237,21 @@ if __name__ == "__main__":
     stop_event = multiprocessing.Event()
     data_queue = multiprocessing.Queue()
 
+    # Get config for the writer process
+    writer_config = config["data_generator"]
     writer_proc = multiprocessing.Process(
-        target=buffer_writer_process, args=(stop_event, data_queue, buffer_path)
+        target=buffer_writer_process,
+        args=(
+            stop_event,
+            data_queue,
+            buffer_path,
+            writer_config["buffer_write_interval_seconds"],
+        ),
     )
     writer_proc.start()
 
     try:
-        main(stop_event, data_queue, actor_path, stop_file_path)
+        main(stop_event, data_queue, actor_path, stop_file_path, config)
     except KeyboardInterrupt:
         print("[GENERATOR] Stopping data generation.")
     finally:

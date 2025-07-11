@@ -12,15 +12,15 @@ import time
 import pickle
 import portalocker
 import threading
+import yaml  # Import the YAML library
+import random
 
 
 def train_model(
     model,
     dataset,
+    config: dict,
     batch_size=32,
-    num_epochs=100,
-    learning_rate=0.001,
-    validation_split=0.2,
     stop_event=None,
 ):
     """
@@ -29,16 +29,18 @@ def train_model(
     Parameters:
     - model: The PyTorch model to train.
     - dataset: A tuple (X, y) where X is the input vectors and y is the target vectors.
+    - config: A dictionary containing training configuration.
     - batch_size: Number of samples per batch.
-    - num_epochs: Number of training epochs.
-    - learning_rate: Learning rate for the optimizer.
-    - validation_split: Fraction of the dataset to use for validation.
     - stop_event: A threading.Event to signal interruption from another thread.
 
     Returns:
     - train_losses: List of training losses.
     - val_losses: List of validation losses.
     """
+    trainer_config = config["world_model_trainer"]
+    num_epochs = trainer_config["epochs_per_cycle"]
+    learning_rate = trainer_config["learning_rate"]
+    validation_split = trainer_config["validation_split"]
 
     # Unpack dataset
     X, y = dataset
@@ -73,7 +75,10 @@ def train_model(
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, "min", patience=5, factor=0.3
+        optimizer,
+        "min",
+        patience=trainer_config["lr_patience"],
+        factor=trainer_config["lr_factor"],
     )
 
     train_losses = []
@@ -179,6 +184,46 @@ def pop_data_from_buffer(buffer_path):
         return []
 
 
+def sample_data_from_buffer(buffer_path, sample_size):
+    """
+    Reads all data from the buffer file and returns a random sample of it.
+    Does NOT clear the file.
+    """
+    if not os.path.exists(buffer_path) or os.path.getsize(buffer_path) == 0:
+        return []
+
+    try:
+        with portalocker.Lock(buffer_path, "rb", timeout=5) as f:
+            all_data = []
+            while True:
+                try:
+                    all_data.extend(pickle.load(f))
+                except EOFError:
+                    break
+                except pickle.UnpicklingError:
+                    print(
+                        "[TRAINER] Warning: Encountered a partial write. Skipping this read attempt."
+                    )
+                    return []
+
+            if len(all_data) < sample_size:
+                # Not enough data to form a sample of the requested size
+                return []
+
+            # Randomly sample 'sample_size' records from the data
+            sampled_data = random.sample(all_data, sample_size)
+            return sampled_data
+
+    except portalocker.exceptions.LockException:
+        print(
+            "[TRAINER] Could not acquire lock on buffer file, another process is using it."
+        )
+        return []
+    except Exception as e:
+        print(f"[TRAINER] An unexpected error occurred while sampling the buffer: {e}")
+        return []
+
+
 def peek_buffer_size(buffer_path):
     """Safely checks the number of records in the buffer file without modifying it."""
     if not os.path.exists(buffer_path) or os.path.getsize(buffer_path) == 0:
@@ -239,18 +284,19 @@ def main():
         help="The size of the action space.",
     )
     parser.add_argument(
-        "--new-data-threshold",
-        type=int,
-        default=512,
-        help="Number of new records in buffer to trigger a training cycle update.",
-    )
-    parser.add_argument(
-        "--epochs-per-cycle",
-        type=int,
-        default=10000,
-        help="Max epochs to train per cycle if not interrupted.",
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the YAML configuration file.",
     )
     args = parser.parse_args()
+
+    # Load configuration from YAML file
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+    trainer_config = config["world_model_trainer"]
+    buffer_policy = trainer_config.get("buffer_policy", "latest")  # Default to 'latest'
+    batch_size_config = trainer_config.get("batch_size", "all")  # Default to 'all'
 
     buffer_path = os.path.join(args.save_folder, "buffer.pkl")
     model_save_path = os.path.join(args.save_folder, "model.pth")
@@ -262,7 +308,7 @@ def main():
 
     model = SimpleModel(
         input_dim=state_size + action_size,
-        hidden_dim=1024,
+        hidden_dim=trainer_config["hidden_dim"],
         output_dim=state_size + 1,  # next_state, reward
         state_size=state_size,
         action_size=action_size,
@@ -275,7 +321,8 @@ def main():
         args=(
             stop_training_event,
             buffer_path,
-            args.new_data_threshold,
+            trainer_config["new_data_threshold"],
+            trainer_config["watcher_interval_seconds"],
         ),
         daemon=True,
     )
@@ -290,11 +337,21 @@ def main():
         stop_training_event.wait()
         stop_training_event.clear()
 
-        # Pop the new data that triggered the event
-        new_data = pop_data_from_buffer(buffer_path)
+        # Pop or sample data based on the configured policy
+        if buffer_policy == "latest":
+            new_data = pop_data_from_buffer(buffer_path)
+        elif buffer_policy == "random":
+            # The threshold is now the sample size for random sampling
+            new_data = sample_data_from_buffer(
+                buffer_path, trainer_config["new_data_threshold"]
+            )
+        else:
+            raise ValueError(f"Unknown buffer policy: {buffer_policy}")
 
         if not new_data:
-            print("[TRAINER] Watcher signaled but buffer was empty. Retrying...")
+            print(
+                "[TRAINER] Watcher signaled but no new data was retrieved. Retrying..."
+            )
             continue
 
         inp_data, outp_data = zip(*new_data)
@@ -321,8 +378,16 @@ def main():
             )
             continue
 
+        # Determine batch size for training
+        if batch_size_config == "all":
+            training_batch_size = len(training_inp)
+        elif isinstance(batch_size_config, int):
+            training_batch_size = batch_size_config
+        else:
+            raise ValueError(f"Invalid batch size configuration: {batch_size_config}")
+
         print(
-            f"\n[TRAINER] --- Starting training on new batch of {len(training_inp)} records ---"
+            f"\n[TRAINER] --- Starting training on {len(training_inp)} records (batch size: {batch_size_config}) ---"
         )
 
         # The watcher thread is still running. We need to clear the event again
@@ -334,9 +399,8 @@ def main():
         train_losses, val_losses, _ = train_model(
             model,
             (training_inp, training_outp),
-            batch_size=len(training_inp),
-            num_epochs=args.epochs_per_cycle,
-            learning_rate=1e-5,
+            config=config,
+            batch_size=training_batch_size,
             stop_event=stop_training_event,
         )
 

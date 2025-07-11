@@ -7,6 +7,9 @@ from dm_control import suite
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
+WINDOW_WIDTH = 360
+WINDOW_HEIGHT = 270
+
 
 class DMCWrapper(gym.Env):
     """
@@ -81,13 +84,13 @@ class DMCWrapper(gym.Env):
                 if not hasattr(self, "_window_initialized"):
                     self._window_name = "DMC Cartpole"
                     cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow(self._window_name, 960, 540)
+                    cv2.resizeWindow(self._window_name, WINDOW_WIDTH, WINDOW_HEIGHT)
                     self._window_initialized = True
 
                 # Get the frame from dm_control
                 frame = self.env.physics.render(
-                    width=640,
-                    height=480,
+                    width=WINDOW_WIDTH,
+                    height=WINDOW_HEIGHT,
                     camera_id=self.camera_id,
                 )
 
@@ -102,16 +105,16 @@ class DMCWrapper(gym.Env):
             except ImportError:
                 print("OpenCV not available, falling back to rgb_array mode")
                 return self.env.physics.render(
-                    height=540, width=960, camera_id=self.camera_id
+                    height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
                 )
             except Exception as e:
                 print(f"Error in human rendering: {e}, falling back to rgb_array mode")
                 return self.env.physics.render(
-                    height=540, width=960, camera_id=self.camera_id
+                    height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
                 )
         else:
             return self.env.physics.render(
-                height=540, width=960, camera_id=self.camera_id
+                height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
             )
 
     def close(self):

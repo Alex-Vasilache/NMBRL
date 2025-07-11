@@ -18,12 +18,17 @@ class WorldModelWrapper(DummyVecEnv):
         self,
         observation_space: spaces.Box,
         action_space: spaces.Box,
+        config: dict,
         batch_size: int = 1,
         trained_folder: str = "world_models/trained/v1",
-        model_check_interval_s: int = 5,
-        obs_clip_range: float = 10.0,
-        reward_clip_range: tuple = (-2.0, 2.0),
     ):
+        # --- Config ---
+        self.config = config
+        wrapper_config = self.config["sac_trainer"]["world_model_wrapper"]
+        model_check_interval_s = wrapper_config["model_check_interval_s"]
+        obs_clip_range = wrapper_config["obs_clip_range"]
+        reward_clip_range = tuple(wrapper_config["reward_clip_range"])
+
         # --- Basic Env Setup ---
         self.observation_space = observation_space
         self.action_space = action_space
@@ -62,15 +67,32 @@ class WorldModelWrapper(DummyVecEnv):
         self.latest_mod_time = None
         self.model_lock = threading.Lock()
 
+        # --- Wait for the first model to be created ---
+        print(
+            f"[{datetime.now()}] Waiting for the first world model to appear at: {self.model_path}"
+        )
+        wait_timeout_seconds = 300  # 5 minutes
+        wait_start_time = time.time()
+        model_found = False
+        while not model_found and time.time() - wait_start_time < wait_timeout_seconds:
+            if os.path.exists(self.model_path):
+                model_found = True
+            else:
+                time.sleep(2)  # Poll every 2 seconds
+
+        if not model_found:
+            raise RuntimeError(
+                f"World model did not appear within {wait_timeout_seconds} seconds. Aborting."
+            )
+
         # Attempt to load model at startup
         self._find_and_load_model_if_new()
 
         if self.nn_model is None:
-            print(
-                f"Warning: No model found in {self.model_folder}. Using a placeholder. Predictions will be zero until a model is loaded."
+            # This should ideally not be reached if the wait logic is correct
+            raise RuntimeError(
+                f"Failed to load the world model from {self.model_path} after it was found."
             )
-            # Use a dummy model that predicts zeros
-            self.nn_model = self._create_placeholder_model()
 
         # Start the background thread to watch for new models
         self.stop_event = threading.Event()
@@ -93,9 +115,13 @@ class WorldModelWrapper(DummyVecEnv):
 
     def _create_model_instance(self):
         """Creates an instance of the model with the correct dimensions."""
+        # Get the hidden dimension from the same config used by the trainer
+        world_model_config = self.config["world_model_trainer"]
+        hidden_dim = world_model_config["hidden_dim"]
+
         return SimpleModel(
             input_dim=self.state_size + self.action_size,
-            hidden_dim=1024,  # From trainer script
+            hidden_dim=hidden_dim,
             output_dim=self.state_size + 1,  # next_state + reward
             state_size=self.state_size,
             action_size=self.action_size,

@@ -3,7 +3,7 @@ torch
 tensorboard==2.14.1
 protobuf==4.25.8
 absl-py==1.4.0
-PyYAML
+PyYAML==6.0
 dm_control
 opencv-contrib-python==4.8.1.78
 gymnasium

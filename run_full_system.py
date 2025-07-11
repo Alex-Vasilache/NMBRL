@@ -4,7 +4,17 @@ import os
 import threading
 import datetime
 import shutil
+import yaml  # Import the YAML library
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+
+
+def stream_watcher(identifier, stream):
+    """Monitors a stream and prints its output with an identifier."""
+    if stream is None:
+        return
+    for line in iter(stream.readline, ""):
+        print(f"[{identifier}] {line}", end="")
+    stream.close()
 
 
 def run_system():
@@ -15,9 +25,18 @@ def run_system():
     3. SAC Agent Trainer
     Waits for the SAC agent to finish, then stops the other processes.
     """
+    # --- Load configuration from YAML file ---
+    config_path = "configs/full_system_config.yaml"
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Get system run configurations
+    run_config = config["run_system"]
+    create_new_consoles = run_config.get("create_new_consoles", True)
+
     # 1. Create unique folder for the run
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_folder = os.path.join("full_system_run", timestamp)
+    run_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
     world_model_folder = os.path.join(run_folder, "world_model_data")
     os.makedirs(world_model_folder, exist_ok=True)
     print(f"--- Created unique folder for this run: {run_folder} ---")
@@ -27,7 +46,7 @@ def run_system():
 
     # --- Get environment dimensions ---
     print("--- Getting environment dimensions ---")
-    sim_env = wrapper(seed=42, n_envs=1)
+    sim_env = wrapper(seed=config["global"]["seed"], n_envs=1)
     sim_env.reset()  # This is crucial to initialize the spaces
     if sim_env.observation_space is None or sim_env.action_space is None:
         raise RuntimeError("Environment spaces were not initialized correctly.")
@@ -37,12 +56,15 @@ def run_system():
     sim_env.close()
 
     # --- Commands to run ---
+    # All scripts now receive the path to the config file
     generator_command = [
         "python",
         "-u",
         "learning/dynamic_data_generator.py",
         "--save-folder",
         world_model_folder,
+        "--config",
+        config_path,
     ]
     world_model_trainer_command = [
         "python",
@@ -54,6 +76,8 @@ def run_system():
         str(state_size),
         "--action-size",
         str(action_size),
+        "--config",
+        config_path,
     ]
     sac_trainer_command = [
         "python",
@@ -61,37 +85,81 @@ def run_system():
         "learning/dynamic_train_sac_cartpole.py",
         "--world-model-folder",
         world_model_folder,
+        "--config",
+        config_path,
     ]
 
     generator_proc = None
     world_model_trainer_proc = None
     sac_trainer_proc = None
+    threads = []
 
-    # Determine the correct creation flags for the OS
-    creation_flags = 0
-    if os.name == "nt":
-        creation_flags = subprocess.CREATE_NEW_CONSOLE
+    # --- Setup subprocess arguments based on console config ---
+    popen_kwargs = {}
+    if create_new_consoles and os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    else:
+        popen_kwargs.update(
+            {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "bufsize": 1,
+                "universal_newlines": True,
+            }
+        )
+    if os.name != "nt":
+        popen_kwargs["preexec_fn"] = os.setsid
 
     try:
-        # 2. Start all three processes in new console windows
-        print("\n--- Starting Data Generator in a new console ---")
-        generator_proc = subprocess.Popen(
-            generator_command, creationflags=creation_flags
-        )
+        # 2. Start all three processes
+        print("\n--- Starting Data Generator ---")
+        generator_proc = subprocess.Popen(generator_command, **popen_kwargs)
 
-        print("--- Starting World Model Trainer in a new console ---")
+        print("--- Starting World Model Trainer ---")
         world_model_trainer_proc = subprocess.Popen(
-            world_model_trainer_command, creationflags=creation_flags
+            world_model_trainer_command, **popen_kwargs
         )
 
         # Give the other two a head start to generate some data
-        print("--- Giving data generator and world model a 15-second head start... ---")
-        time.sleep(15)
-
-        print("\n--- Starting SAC Agent Trainer in a new console ---")
-        sac_trainer_proc = subprocess.Popen(
-            sac_trainer_command, creationflags=creation_flags
+        head_start = run_config["head_start_seconds"]
+        print(
+            f"--- Giving data generator and world model a {head_start}-second head start... ---"
         )
+        time.sleep(head_start)
+
+        print("\n--- Starting SAC Agent Trainer ---")
+        sac_trainer_proc = subprocess.Popen(sac_trainer_command, **popen_kwargs)
+
+        # --- Start stream watchers if not using new consoles ---
+        if not create_new_consoles:
+            threads = [
+                threading.Thread(
+                    target=stream_watcher, args=("GEN-STDOUT", generator_proc.stdout)
+                ),
+                threading.Thread(
+                    target=stream_watcher, args=("GEN-STDERR", generator_proc.stderr)
+                ),
+                threading.Thread(
+                    target=stream_watcher,
+                    args=("WM-TRAIN-STDOUT", world_model_trainer_proc.stdout),
+                ),
+                threading.Thread(
+                    target=stream_watcher,
+                    args=("WM-TRAIN-STDERR", world_model_trainer_proc.stderr),
+                ),
+                threading.Thread(
+                    target=stream_watcher,
+                    args=("SAC-TRAIN-STDOUT", sac_trainer_proc.stdout),
+                ),
+                threading.Thread(
+                    target=stream_watcher,
+                    args=("SAC-TRAIN-STDERR", sac_trainer_proc.stderr),
+                ),
+            ]
+            for t in threads:
+                t.start()
+            print("--- Output streaming to this console. ---")
 
         # 3. Wait for the main SAC training process to complete
         print(
@@ -137,6 +205,12 @@ def run_system():
             except subprocess.TimeoutExpired:
                 print("--- Trainer did not terminate. Force killing. ---")
                 world_model_trainer_proc.kill()
+
+        # Join threads to capture all output if they were started
+        if threads:
+            print("--- Joining output threads... ---")
+            for t in threads:
+                t.join()
 
         print("--- All processes stopped ---")
 
