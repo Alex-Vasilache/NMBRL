@@ -24,53 +24,6 @@ def offload_env_data(
     data_queue.put((inp_data.copy(), outp_data.copy()))
 
 
-class RandomPolicy:
-    def __init__(self, action_space):
-        self.action_space = action_space
-
-    def predict(self, obs, deterministic=False):
-        return self.action_space.sample().reshape(1, -1), None
-
-
-def find_latest_model(actor_dir: str):
-    """Finds the latest model .zip file and the VecNormalize stats .pkl file."""
-
-    # The Agent trainer saves the best model in a specific subfolder
-    best_model_dir = os.path.join(actor_dir, "actor_logs", "checkpoints")
-    try:
-        files_in_dir = os.listdir(best_model_dir)
-    except (FileNotFoundError, NotADirectoryError):
-        return None, None
-
-    model_files = [
-        os.path.join(best_model_dir, f) for f in files_in_dir if f.endswith(".zip")
-    ]
-
-    if not model_files:
-        if not files_in_dir:
-            print(
-                f"[GENERATOR] Info: Actor directory is empty. Waiting for a model to be saved in '{best_model_dir}'"
-            )
-        else:
-            print(
-                f"[GENERATOR] Info: No models (.zip files) found in '{best_model_dir}'."
-            )
-        return None, None
-
-    latest_model = max(model_files, key=os.path.getctime)
-
-    # Find the corresponding VecNormalize file if it exists
-    model_name_without_ext = os.path.splitext(os.path.basename(latest_model))[0]
-    vec_normalize_path = os.path.join(
-        best_model_dir, f"{model_name_without_ext}_vecnorm.pkl"
-    )
-
-    if not os.path.exists(vec_normalize_path):
-        vec_normalize_path = None
-
-    return latest_model, vec_normalize_path
-
-
 def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interval=1):
     """Periodically writes the contents of the data queue to the file buffer."""
 
@@ -106,7 +59,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
 
     # Instantiate the actor wrapper
     actor_wrapper = ActorWrapper(
-        actor_path=actor_path, base_env=base_env, config=config
+        actor_path=actor_path, action_space=base_env.action_space, config=config
     )
 
     # Initialize state and data buffers from the initial environment
@@ -129,7 +82,7 @@ def main(stop_event, data_queue, actor_path: str, stop_file_path: str, config: d
                 continue
 
             # Get the latest actor and environment from the wrapper
-            actor, env = actor_wrapper.get_actor_and_env()
+            actor = actor_wrapper.get_actor()
 
             action, _ = actor.predict(state, deterministic=False)
 
