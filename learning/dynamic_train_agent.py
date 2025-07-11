@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import argparse
+from stable_baselines3.common.monitor import Monitor
 import yaml
 
 from agents.actor_wrapper import ActorWrapper

@@ -83,7 +83,7 @@ def run_system():
     agent_trainer_command = [
         "python",
         "-u",
-        "learning/dynamic_train_agent_sb3.py",
+        "learning/dynamic_train_agent.py",
         "--shared-folder",
         shared_folder,
         "--config",
@@ -235,7 +235,7 @@ def run_system():
 
         # 6. Check for results
         print("\n--- Final Run Summary ---")
-        print(f"Run folder: {run_folder}")
+        print(f"Run folder: {shared_folder}")
 
         world_model_path = os.path.join(shared_folder, "model.pth")
         if os.path.exists(world_model_path):

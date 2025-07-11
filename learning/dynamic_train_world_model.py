@@ -43,6 +43,8 @@ def train_model(
     learning_rate = trainer_config["learning_rate"]
     validation_split = trainer_config["validation_split"]
 
+    model.valid_init_state = torch.tensor(dataset[0][0][: model.state_size])
+
     # Unpack dataset
     X, y = dataset
 

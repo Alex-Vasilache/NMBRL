@@ -36,6 +36,8 @@ class WorldModelWrapper(DummyVecEnv):
         self.state_size = self.observation_space.shape[0]
         assert isinstance(self.action_space, spaces.Box)
         self.action_size = self.action_space.shape[0]
+        self.terminated = np.zeros(batch_size, dtype=bool)
+        self.infos = [{} for _ in range(batch_size)]
 
         # --- Clipping Ranges ---
         self.obs_clip_range = obs_clip_range
@@ -134,6 +136,7 @@ class WorldModelWrapper(DummyVecEnv):
             def __init__(self, output_dim):
                 super().__init__()
                 self.output_dim = output_dim
+                self.valid_init_state = torch.zeros(output_dim - 1)
 
             def forward(self, x):
                 return torch.zeros(x.shape[0], self.output_dim)
@@ -231,21 +234,21 @@ class WorldModelWrapper(DummyVecEnv):
 
             self.state = clamped_next_state
 
-        terminated = np.zeros(self.num_envs, dtype=bool)
-        # In a real scenario, you might want the world model to predict termination.
-        # For now, we assume it never terminates on its own.
-        infos = [{} for _ in range(self.num_envs)]
         return (
             clamped_next_state.numpy(),
             clamped_reward.numpy(),
-            terminated,
-            infos,
+            self.terminated,
+            self.infos,
         )
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             super().seed(seed)
-        self.state = torch.zeros((self.num_envs, self.state_size), dtype=torch.float32)
+        viable_init_state = self.nn_model.valid_init_state.repeat(self.num_envs, 1)
+        random_offset = torch.randn(self.num_envs, 1) * 0.01
+        self.state = viable_init_state + random_offset
+        self.terminated = np.zeros(self.num_envs, dtype=bool)
+        self.infos = [{} for _ in range(self.num_envs)]
         return self.state.numpy()
 
     def set_state(self, state_np: np.ndarray):
