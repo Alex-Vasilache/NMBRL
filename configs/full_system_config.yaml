@@ -38,24 +38,9 @@ sac_trainer:
   max_episode_steps: 1000
   # Training run settings
   total_timesteps: 100000
-  # Model architecture
-  net_arch: [128, 128]            # legacy
-  # SAC Hyperparameters
-  batch_size: 64                  # legacy
-  buffer_size: 100000             # legacy
-  learning_starts: 100            # legacy
-  initial_lr: 0.0001              # legacy
-  gamma: 0.997                    # legacy
-  tau: 0.01                       # legacy
-  ent_coef: "auto"                # legacy
-  target_update_interval: 1       # legacy
-  gradient_steps: 1               # legacy
-  train_freq_steps: 1             # legacy
-  use_sde: False                  # legacy
   # Callback settings
-  eval_freq: 1000                 # legacy
-  checkpoint_freq: 500            # legacy
-
+  eval_freq: 1000
+  checkpoint_freq: 500
 
   # Settings for the world model wrapper used by the SAC agent
   world_model_wrapper:
