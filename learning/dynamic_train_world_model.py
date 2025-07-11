@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-from world_models.world_model_v1 import SimpleModel
+from networks.world_model_v1 import SimpleModel
 
 import torch
 import torch.nn as nn

@@ -1,16 +1,16 @@
 # Global configuration for the entire run
 global:
   seed: 42
-  run_folder_prefix: "full_system_run"
+  run_folder_prefix: "runs"
 
 # Configuration for the main run_full_system.py script
 run_system:
   head_start_seconds: 1
-  create_new_consoles: true # If false, output will be piped to the main console
+  create_new_consoles: false # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
-  max_episode_steps: 10000
+  max_episode_steps: 1000
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
 
@@ -25,7 +25,7 @@ world_model_trainer:
   buffer_policy: "latest" # "latest" or "random"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.0001
+  learning_rate: 0.00001
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -37,7 +37,7 @@ sac_trainer:
   n_envs: 16
   max_episode_steps: 1000
   # Training run settings
-  total_timesteps: 500000
+  total_timesteps: 100000
   # Model architecture
   net_arch: [128, 128]            # legacy
   # SAC Hyperparameters

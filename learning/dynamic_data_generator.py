@@ -1,14 +1,13 @@
 import numpy as np
 import os
 import pickle
-import time
 from typing import Any
 import multiprocessing
 import portalocker
 import queue  # For queue.Empty exception
 import argparse
 import yaml
-from learning.actor_wrapper import ActorWrapper
+from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
 

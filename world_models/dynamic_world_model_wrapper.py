@@ -6,7 +6,7 @@ from gymnasium import spaces
 import numpy as np
 import torch
 from stable_baselines3.common.vec_env import DummyVecEnv
-from world_models.world_model_v1 import SimpleModel
+from networks.world_model_v1 import SimpleModel
 import os
 import threading
 import time
