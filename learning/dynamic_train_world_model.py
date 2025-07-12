@@ -43,10 +43,14 @@ def train_model(
     learning_rate = trainer_config["learning_rate"]
     validation_split = trainer_config["validation_split"]
 
+    # Create shuffled indices for the dataset
+    num_samples = dataset[0].shape[0]
+    shuffled_indices = torch.randperm(num_samples)
+
     model.valid_init_state = torch.tensor(
-        dataset[0][:, : model.state_size], dtype=torch.float32
+        dataset[0][shuffled_indices][:, : model.state_size], dtype=torch.float32
     )
-    print(f"Valid init state: {model.valid_init_state.shape}")
+    # print(f"Valid init state: {model.valid_init_state.shape}")
 
     # Unpack dataset
     X, y = dataset

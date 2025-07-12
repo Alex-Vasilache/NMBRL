@@ -10,20 +10,20 @@ run_system:
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
-  max_episode_steps: 2000
+  max_episode_steps: 1000
   actor_check_interval_seconds: 1
-  buffer_write_interval_seconds: 3
+  buffer_write_interval_seconds: 2
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 4000
+  new_data_threshold: 2000
   watcher_interval_seconds: 3
   # Model architecture
-  hidden_dim: 2048
+  hidden_dim: 1024
   # Training parameters
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
-  batch_size: "all" # "all" or an integer value
+  batch_size: 500 # "all" or an integer value
   epochs_per_cycle: 10000
   learning_rate: 0.00001
   validation_split: 0.2
@@ -35,7 +35,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "SAC" # "PPO" or "SAC"
   # Environment settings
-  n_envs: 16
+  n_envs: 64
   max_episode_steps: 15
   # Training run settings
   total_timesteps: 10000000
