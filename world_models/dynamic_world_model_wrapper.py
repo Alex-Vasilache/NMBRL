@@ -261,7 +261,13 @@ class WorldModelWrapper(DummyVecEnv):
             self.infos,
         )
 
-    def reset(self, *, seed=None, options=None):
+    def reset(
+        self,
+        *,
+        seed=None,
+        options=None,
+        remove_from_replay_buffer=False,
+    ):
         if seed is not None:
             super().seed(seed)
             torch.manual_seed(seed)
@@ -271,12 +277,23 @@ class WorldModelWrapper(DummyVecEnv):
             random_idxs = np.random.randint(
                 0, self.nn_model.valid_init_state.shape[0], self.num_envs
             )
+            # print(
+            #     f"[{datetime.now()}] Resetting with valid init state from replay using indices: {random_idxs}"
+            # )
+
             self.state = self.nn_model.valid_init_state[random_idxs]
+            if remove_from_replay_buffer:
+                self.nn_model.valid_init_state = np.delete(
+                    self.nn_model.valid_init_state, random_idxs, axis=0
+                )
         else:
             # Fallback to a random state if the model or its buffer isn't ready
             self.state = (
                 torch.from_numpy(self.observation_space.sample()).float().unsqueeze(0)
             )
+            # print(
+            #     f"[{datetime.now()}] Resetting with random state from observation space"
+            # )
 
         self.step_count = 0
         return self.state.numpy()

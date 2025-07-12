@@ -12,18 +12,19 @@ run_system:
 data_generator:
   max_episode_steps: 1000
   actor_check_interval_seconds: 1
-  buffer_write_interval_seconds: 2
+  buffer_write_interval_seconds: 1
+  dt_simulation: 0.02 # todo integrate into the sim
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   # Training trigger settings
-  new_data_threshold: 2000
-  watcher_interval_seconds: 3
+  new_data_threshold: 1000
+  watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 1024
   # Training parameters
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
-  batch_size: 500 # "all" or an integer value
+  batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
   learning_rate: 0.00001
   validation_split: 0.2
@@ -33,10 +34,10 @@ world_model_trainer:
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
-  agent_type: "SAC" # "PPO" or "SAC"
+  agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 64
-  max_episode_steps: 15
+  n_envs: 16
+  max_episode_steps: 100
   # Training run settings
   total_timesteps: 10000000
   # Callback settings
@@ -47,4 +48,57 @@ agent_trainer:
   world_model_wrapper:
     model_check_interval_s: 1
     obs_clip_range: 5.0
-    reward_clip_range: [-1.0, 1.0] 
+    reward_clip_range: [-1.0, 1.0]
+
+# Configuration for learning/dynamic_train_agent_dreamer.py
+dreamer_agent_trainer:
+  # Training
+  num_epochs: 100000
+  batch_size: 16
+  learning_rate: 3e-5
+  eps: 1e-5
+  grad_clip: 100.0 # try 1.0
+  reward_EMA: True
+  deterministic_run: False
+  device: "cpu"
+
+  # Behavior
+  gamma: 0.997            # Discount factor for the reward
+  discount_lambda: 0.95   # return mixing factor
+  imag_horizon: 15        # Horizon for imagined trajectories
+
+  # Model
+  act: 'SiLU'             # Activation function
+  norm: True              # Layer Normalization
+  units: 128               # Number of neurons in each layer # todo 32-64
+
+  # Logging
+  save_frequency: 100  # Save models every N episodes (None to disable)
+  eval_frequency: 100  # Evaluate every N episodes (None to disable)
+  print_frequency: 10  # Print every N episodes (None to disable)
+
+  # Evaluation (runs at same frequency as saves)
+  eval_episodes: 5  # Number of episodes for intermediate evaluation
+  final_eval_episodes: 100  # Number of episodes for final evaluation
+
+  # Actor
+  actor:
+    layers: 2 # todo 2
+    dist: 'normal' # maybe TanhBijector or tanh_normal
+    entropy: 3e-4
+    unimix_ratio: 0.01
+    std: 'learned'
+    min_std: 0.1
+    max_std: 1.0
+    temp: 0.1
+    outscale: 1.0  # try 0.01
+    imag_grad: 'reinforce'
+
+  # Critic
+  critic:
+    layers: 2 # todo 2
+    dist: 'symlog_disc'
+    outscale: 0.0
+    slow_target: True
+    slow_target_update: 1
+    slow_target_fraction: 0.02

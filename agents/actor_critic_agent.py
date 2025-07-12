@@ -93,7 +93,7 @@ class ActorCriticAgent(nn.Module):
         self.actor.train()
         self.critic.train()
 
-    def get_action(self, state):
+    def get_action(self, state, deterministic=False):
         """
         Get an action from the actor network.
         """
@@ -105,7 +105,7 @@ class ActorCriticAgent(nn.Module):
         else:
             # ensure it is on device
             state = state.to(self.config["device"])
-        return self.actor(state).sample()
+        return self.actor(state).mode() if deterministic else self.actor(state).sample()
 
     def _update_slow_target(self):
         if self.config["critic"]["slow_target"]:

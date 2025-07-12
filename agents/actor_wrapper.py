@@ -75,6 +75,14 @@ class ActorWrapper:
                     seed=self.config["global"]["seed"],
                     tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
                 )
+            elif self.agent_type == "DREAMER":
+                from agents.dreamer_ac_agent import DreamerACAgent
+
+                self.model = DreamerACAgent(
+                    self.config,
+                    self.env,
+                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                )
             else:
                 raise ValueError(f"Unknown agent type: {self.agent_type}")
 
@@ -132,6 +140,10 @@ class ActorWrapper:
                     from stable_baselines3 import SAC
 
                     new_model = SAC.load(new_model_path)
+                elif self.agent_type == "DREAMER":
+                    from agents.dreamer_ac_agent import DreamerACAgent
+
+                    new_model = DreamerACAgent.load(new_model_path, env=self.env)
                 else:
                     print(
                         f"[ACTOR-WRAPPER] Unknown agent type {self.agent_type}, cannot load model."

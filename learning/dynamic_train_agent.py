@@ -91,8 +91,6 @@ def main():
         progress_bar=True,
     )
 
-    # The callbacks handle saving the best model and checkpoints, so a final save is not needed.
-
     train_env.close()
     print("\n[AGENT-TRAINER] Training finished and environments closed.")
 
