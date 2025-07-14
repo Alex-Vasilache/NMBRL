@@ -7,6 +7,9 @@ import portalocker
 import queue  # For queue.Empty exception
 import argparse
 import yaml
+import time
+from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from utils.tools import seed_everything
@@ -50,6 +53,19 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 
 
 def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config: dict):
+    # Setup TensorBoard logging
+    tb_config = config.get("tensorboard", {})
+    tb_log_dir = os.path.join(
+        shared_folder, tb_config.get("log_dir", "tensorboard_logs"), "data_generator"
+    )
+    os.makedirs(tb_log_dir, exist_ok=True)
+    writer = SummaryWriter(
+        log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)
+    )
+    log_frequency = tb_config.get("log_frequency", 10)
+
+    print(f"[GENERATOR] TensorBoard logging to: {tb_log_dir}")
+
     # Create the base environment that the ActorWrapper will manage
     base_env = wrapper(
         seed=config["global"]["seed"],
@@ -74,6 +90,9 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     episode_reward = 0
     episode_length = 0
     episode_count = 0
+    total_steps = 0
+    data_generation_start_time = time.time()
+    last_log_time = time.time()
 
     try:
         while not stop_event.is_set():
@@ -105,20 +124,44 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
 
             episode_reward += reward[0]
             episode_length += 1
+            total_steps += 1
 
             if terminated[0]:
                 print(
                     f"[GENERATOR] Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
                 )
+
+                # Log episode statistics to TensorBoard
+                writer.add_scalar("Episode/Reward", episode_reward, episode_count)
+                writer.add_scalar("Episode/Total_Steps", total_steps, episode_count)
+
                 state = env.reset()
                 episode_reward = 0
                 episode_length = 0
                 episode_count += 1
 
+            # Log periodic statistics
+            current_time = time.time()
+            if current_time - last_log_time >= log_frequency:
+                data_generation_rate = total_steps / (
+                    current_time - data_generation_start_time
+                )
+                writer.add_scalar(
+                    "DataGeneration/Steps_Per_Second", data_generation_rate, total_steps
+                )
+                writer.add_scalar(
+                    "DataGeneration/Total_Episodes", episode_count, total_steps
+                )
+
+                last_log_time = current_time
+
             offload_env_data(data_queue, inp_data, outp_data)
     finally:
         # Ensure the actor wrapper's thread is cleaned up
         actor_wrapper.close()
+        # Close TensorBoard writer
+        writer.close()
+        print(f"[GENERATOR] TensorBoard logs saved to: {tb_log_dir}")
 
 
 if __name__ == "__main__":

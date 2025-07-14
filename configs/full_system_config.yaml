@@ -2,6 +2,12 @@
 global:
   seed: 42
   run_folder_prefix: "runs"
+  
+# TensorBoard logging configuration
+tensorboard:
+  log_dir: "tensorboard_logs"
+  log_frequency: 10  # Log every N steps/episodes
+  flush_seconds: 30  # Flush logs every N seconds
 
 # Configuration for the main run_full_system.py script
 run_system:
@@ -11,7 +17,7 @@ run_system:
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
   max_episode_steps: 1000
-  actor_check_interval_seconds: 1
+  actor_check_interval_seconds: 5
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
 
@@ -36,7 +42,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 16
+  n_envs: 64
   max_episode_steps: 100
   # Training run settings
   total_timesteps: 10000000
@@ -54,8 +60,8 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 16
-  learning_rate: 3e-5
+  batch_size: 64
+  learning_rate: 1e-4
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
   reward_EMA: True
@@ -70,7 +76,7 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 256               # Number of neurons in each layer # todo 32-64
+  units: 512               # Number of neurons in each layer # todo 32-64
 
   # Logging
   save_frequency: 200  # Save models every N episodes (None to disable)
@@ -83,7 +89,7 @@ dreamer_agent_trainer:
 
   # Actor
   actor:
-    layers: 3 # todo 2
+    layers: 4 # todo 2
     dist: 'normal' # maybe TanhBijector or tanh_normal
     entropy: 3e-4
     unimix_ratio: 0.01
@@ -96,7 +102,7 @@ dreamer_agent_trainer:
 
   # Critic
   critic:
-    layers: 3 # todo 2
+    layers: 4 # todo 2
     dist: 'symlog_disc'
     outscale: 0.0
     slow_target: True

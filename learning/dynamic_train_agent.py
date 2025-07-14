@@ -3,6 +3,8 @@ import os
 import argparse
 from stable_baselines3.common.monitor import Monitor
 import yaml
+from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 
 from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
@@ -50,6 +52,15 @@ def main():
     LOG_DIR = os.path.join(shared_folder, "actor_logs")
     os.makedirs(LOG_DIR, exist_ok=True)
 
+    # Setup TensorBoard logging
+    tb_config = config.get("tensorboard", {})
+    tb_log_dir = os.path.join(
+        shared_folder, tb_config.get("log_dir", "tensorboard_logs"), "agent_trainer"
+    )
+    os.makedirs(tb_log_dir, exist_ok=True)
+
+    print(f"[AGENT-TRAINER] TensorBoard logging to: {tb_log_dir}")
+
     # Create a temporary real environment just to get the observation and action spaces
     # This env is then closed and not used for training.
     print("--- Creating environment to extract space info ---")
@@ -58,6 +69,12 @@ def main():
     act_space = temp_real_env.action_space
     temp_real_env.close()
     print(f"Obs space: {obs_space}, Action space: {act_space}")
+
+    # Ensure action_space is Box type for WorldModelWrapper
+    from gymnasium.spaces import Box
+
+    if not isinstance(act_space, Box):
+        raise TypeError(f"Expected action_space to be Box, got {type(act_space)}")
 
     print(
         f"--- Initializing World Model environment wrapper (monitoring: {shared_folder}) ---"
@@ -77,6 +94,23 @@ def main():
         shared_folder=shared_folder,
     )
 
+    # Setup TensorBoard logging for callbacks
+    class TensorBoardLoggingCallback:
+        def __init__(self, log_dir):
+            self.writer = SummaryWriter(log_dir=log_dir, flush_secs=30)
+            self.step_count = 0
+
+        def on_step(self, agent) -> bool:
+            # This would be called during training to log metrics
+            # The actual implementation depends on the agent type
+            self.step_count += 1
+            return True
+
+        def close(self):
+            self.writer.close()
+
+    tb_callback = TensorBoardLoggingCallback(tb_log_dir)
+
     checkpoint_callback = CheckpointCallback(
         save_freq=agent_config["checkpoint_freq"],
         save_path=os.path.join(LOG_DIR, "checkpoints"),
@@ -85,11 +119,15 @@ def main():
 
     callbacks = CallbackList([checkpoint_callback])
 
-    agent.learn(
-        total_timesteps=agent_config["total_timesteps"],
-        callback=callbacks,
-        progress_bar=True,
-    )
+    try:
+        agent.learn(
+            total_timesteps=agent_config["total_timesteps"],
+            callback=callbacks,
+            progress_bar=True,
+        )
+    finally:
+        tb_callback.close()
+        print(f"[AGENT-TRAINER] TensorBoard logs saved to: {tb_log_dir}")
 
     train_env.close()
     print("\n[AGENT-TRAINER] Training finished and environments closed.")

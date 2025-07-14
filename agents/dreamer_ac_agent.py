@@ -424,16 +424,19 @@ class DreamerACAgent:
                 )
                 action = self.agent.get_action(state).cpu().detach().numpy()
                 try:
-                    step_return = self.eval_env.step(action)
+                    step_result = self.eval_env.step(action)
                     # Handle different return formats from step
-                    if len(step_return) == 4:
-                        next_state, reward, terminated, info = step_return
+                    step_len = len(step_result)
+                    if step_len == 4:
+                        next_state, reward, terminated, info = step_result[:4]
                         truncated = False
-                    elif len(step_return) == 5:
-                        next_state, reward, terminated, truncated, info = step_return
+                    elif step_len == 5:
+                        next_state, reward, terminated, truncated, info = step_result[
+                            :5
+                        ]
                     else:
                         raise ValueError(
-                            f"Unexpected step return format: {len(step_return)} elements"
+                            f"Unexpected step return format: {step_len} elements"
                         )
                 except Exception as e:
                     print(f"Error during evaluation step: {e}")

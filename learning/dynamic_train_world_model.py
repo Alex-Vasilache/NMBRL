@@ -14,6 +14,8 @@ import portalocker
 import threading
 import yaml  # Import the YAML library
 import random
+from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 from utils.tools import seed_everything
 
 
@@ -23,6 +25,8 @@ def train_model(
     config: dict,
     batch_size=32,
     stop_event=None,
+    writer=None,
+    global_step=0,
 ):
     """
     Train a PyTorch model that maps vectors to vectors.
@@ -33,6 +37,8 @@ def train_model(
     - config: A dictionary containing training configuration.
     - batch_size: Number of samples per batch.
     - stop_event: A threading.Event to signal interruption from another thread.
+    - writer: TensorBoard SummaryWriter for logging.
+    - global_step: Global step counter for TensorBoard logging.
 
     Returns:
     - train_losses: List of training losses.
@@ -179,6 +185,33 @@ def train_model(
         val_dim_error_strs.append(f"R: {val_err_perc_per_dim[state_size]:.2f}%")
 
         current_lr = optimizer.param_groups[0]["lr"]
+
+        # Log metrics to TensorBoard
+        if writer is not None:
+            step = global_step + epoch
+            writer.add_scalar("WorldModel/Train_Loss", epoch_train_loss, step)
+            writer.add_scalar("WorldModel/Val_Loss", epoch_val_loss, step)
+            writer.add_scalar("WorldModel/Train_Error_Percent", train_err_perc, step)
+            writer.add_scalar("WorldModel/Val_Error_Percent", val_err_perc, step)
+            writer.add_scalar("WorldModel/Learning_Rate", current_lr, step)
+
+            # Log per-dimension errors
+            for i in range(state_size):
+                writer.add_scalar(
+                    f"WorldModel/Train_Error_State_{i}", train_err_perc_per_dim[i], step
+                )
+                writer.add_scalar(
+                    f"WorldModel/Val_Error_State_{i}", val_err_perc_per_dim[i], step
+                )
+            writer.add_scalar(
+                f"WorldModel/Train_Error_Reward",
+                train_err_perc_per_dim[state_size],
+                step,
+            )
+            writer.add_scalar(
+                f"WorldModel/Val_Error_Reward", val_err_perc_per_dim[state_size], step
+            )
+
         if (epoch + 1) % 20 == 0 or epoch == 0 or epoch == num_epochs - 1:
             print(
                 f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.1e} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.1e} ({val_err_perc:.2f}%), LR: {current_lr:.1e}"
@@ -425,6 +458,20 @@ def main():
     model_save_path = os.path.join(args.shared_folder, "model.pth")
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
+    # Setup TensorBoard logging
+    tb_config = config.get("tensorboard", {})
+    tb_log_dir = os.path.join(
+        args.shared_folder,
+        tb_config.get("log_dir", "tensorboard_logs"),
+        "world_model_trainer",
+    )
+    os.makedirs(tb_log_dir, exist_ok=True)
+    writer = SummaryWriter(
+        log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)
+    )
+
+    print(f"[TRAINER] TensorBoard logging to: {tb_log_dir}")
+
     # Get state and action sizes from arguments
     state_size = args.state_size
     action_size = args.action_size
@@ -454,88 +501,108 @@ def main():
     print("[TRAINER] World model trainer started. Waiting for data...")
 
     # --- Main Training Loop ---
-    while True:
-        # Wait until the watcher signals that there's enough data
-        print("[TRAINER] Waiting for sufficient data to start training cycle...")
-        stop_training_event.wait()
-        stop_training_event.clear()
+    global_step = 0
+    training_cycle = 0
+    try:
+        while True:
+            # Wait until the watcher signals that there's enough data
+            print("[TRAINER] Waiting for sufficient data to start training cycle...")
+            stop_training_event.wait()
+            stop_training_event.clear()
 
-        # Pop or sample data based on the configured policy
-        if buffer_policy == "latest":
-            # Take all data from buffer (legacy behavior)
-            new_data = pop_data_from_buffer(buffer_path)
-        elif buffer_policy == "oldest_n":
-            # Take exactly N oldest items from buffer
-            new_data = pop_n_oldest_from_buffer(
-                buffer_path, trainer_config["new_data_threshold"]
-            )
-        elif buffer_policy == "random":
-            # The threshold is now the sample size for random sampling
-            new_data = sample_data_from_buffer(
-                buffer_path, trainer_config["new_data_threshold"]
-            )
-        else:
-            raise ValueError(f"Unknown buffer policy: {buffer_policy}")
+            # Pop or sample data based on the configured policy
+            if buffer_policy == "latest":
+                # Take all data from buffer (legacy behavior)
+                new_data = pop_data_from_buffer(buffer_path)
+            elif buffer_policy == "oldest_n":
+                # Take exactly N oldest items from buffer
+                new_data = pop_n_oldest_from_buffer(
+                    buffer_path, trainer_config["new_data_threshold"]
+                )
+            elif buffer_policy == "random":
+                # The threshold is now the sample size for random sampling
+                new_data = sample_data_from_buffer(
+                    buffer_path, trainer_config["new_data_threshold"]
+                )
+            else:
+                raise ValueError(f"Unknown buffer policy: {buffer_policy}")
 
-        if not new_data:
+            if not new_data:
+                print(
+                    "[TRAINER] Watcher signaled but no new data was retrieved. Retrying..."
+                )
+                continue
+
+            inp_data, outp_data = zip(*new_data)
+            training_inp = np.array(inp_data)
+            # We only want to predict next_state and reward, not terminated status
+            training_outp = np.array(outp_data)[:, : state_size + 1]
+
+            # --- Data Validation ---
+            combined_data = np.hstack([training_inp, training_outp])
+            invalid_rows_mask = np.isnan(combined_data).any(axis=1) | np.isinf(
+                combined_data
+            ).any(axis=1)
+            if np.any(invalid_rows_mask):
+                num_invalid = np.sum(invalid_rows_mask)
+                print(
+                    f"[TRAINER] Warning: Found {num_invalid} rows with NaN/inf values. Removing them."
+                )
+                training_inp = training_inp[~invalid_rows_mask]
+                training_outp = training_outp[~invalid_rows_mask]
+
+            if len(training_inp) == 0:
+                print(
+                    "[TRAINER] No valid data remaining after sanitation. Skipping training cycle."
+                )
+                continue
+
+            # Determine batch size for training
+            if batch_size_config == "all":
+                training_batch_size = len(training_inp)
+            elif isinstance(batch_size_config, int):
+                training_batch_size = batch_size_config
+            else:
+                raise ValueError(
+                    f"Invalid batch size configuration: {batch_size_config}"
+                )
+
             print(
-                "[TRAINER] Watcher signaled but no new data was retrieved. Retrying..."
+                f"\n[TRAINER] --- Starting training on {len(training_inp)} records (batch size: {batch_size_config}, policy: {buffer_policy}) ---"
             )
-            continue
 
-        inp_data, outp_data = zip(*new_data)
-        training_inp = np.array(inp_data)
-        # We only want to predict next_state and reward, not terminated status
-        training_outp = np.array(outp_data)[:, : state_size + 1]
+            # The watcher thread is still running. We need to clear the event again
+            # in case it was set while we were processing the pop.
+            # This ensures we train for at least a little while before the *next*
+            # batch of data interrupts us.
+            stop_training_event.clear()
 
-        # --- Data Validation ---
-        combined_data = np.hstack([training_inp, training_outp])
-        invalid_rows_mask = np.isnan(combined_data).any(axis=1) | np.isinf(
-            combined_data
-        ).any(axis=1)
-        if np.any(invalid_rows_mask):
-            num_invalid = np.sum(invalid_rows_mask)
+            train_losses, val_losses, _ = train_model(
+                model,
+                (training_inp, training_outp),
+                config=config,
+                batch_size=training_batch_size,
+                stop_event=stop_training_event,
+                writer=writer,
+                global_step=global_step,
+            )
+
+            # Update global step counter
+            global_step += len(train_losses)
+            training_cycle += 1
+
             print(
-                f"[TRAINER] Warning: Found {num_invalid} rows with NaN/inf values. Removing them."
+                "[TRAINER] --- Training cycle finished/interrupted. Saving model. ---"
             )
-            training_inp = training_inp[~invalid_rows_mask]
-            training_outp = training_outp[~invalid_rows_mask]
+            torch.save(model, model_save_path)
+            print(f"[TRAINER] Model saved to {model_save_path}")
 
-        if len(training_inp) == 0:
-            print(
-                "[TRAINER] No valid data remaining after sanitation. Skipping training cycle."
-            )
-            continue
-
-        # Determine batch size for training
-        if batch_size_config == "all":
-            training_batch_size = len(training_inp)
-        elif isinstance(batch_size_config, int):
-            training_batch_size = batch_size_config
-        else:
-            raise ValueError(f"Invalid batch size configuration: {batch_size_config}")
-
-        print(
-            f"\n[TRAINER] --- Starting training on {len(training_inp)} records (batch size: {batch_size_config}, policy: {buffer_policy}) ---"
-        )
-
-        # The watcher thread is still running. We need to clear the event again
-        # in case it was set while we were processing the pop.
-        # This ensures we train for at least a little while before the *next*
-        # batch of data interrupts us.
-        stop_training_event.clear()
-
-        train_losses, val_losses, _ = train_model(
-            model,
-            (training_inp, training_outp),
-            config=config,
-            batch_size=training_batch_size,
-            stop_event=stop_training_event,
-        )
-
-        print("[TRAINER] --- Training cycle finished/interrupted. Saving model. ---")
-        torch.save(model, model_save_path)
-        print(f"[TRAINER] Model saved to {model_save_path}")
+    except KeyboardInterrupt:
+        print("[TRAINER] Training interrupted by user.")
+    finally:
+        # Close TensorBoard writer
+        writer.close()
+        print(f"[TRAINER] TensorBoard logs saved to: {tb_log_dir}")
 
 
 if __name__ == "__main__":

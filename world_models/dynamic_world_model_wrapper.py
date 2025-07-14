@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 
 
 class WorldModelWrapper(DummyVecEnv):
@@ -45,6 +46,25 @@ class WorldModelWrapper(DummyVecEnv):
         self.obs_clip_range = obs_clip_range
         self.reward_clip_range = reward_clip_range
 
+        # --- TensorBoard Setup ---
+        self.shared_folder = shared_folder
+        tb_config = self.config.get("tensorboard", {})
+        tb_log_dir = os.path.join(
+            shared_folder,
+            tb_config.get("log_dir", "tensorboard_logs"),
+            "world_model_wrapper",
+        )
+        os.makedirs(tb_log_dir, exist_ok=True)
+        self.writer = SummaryWriter(
+            log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)
+        )
+        self.log_frequency = tb_config.get("log_frequency", 10)
+        self.step_count_global = 0
+        self.model_load_count = 0
+        self.last_log_time = time.time()
+
+        print(f"[WORLD-MODEL-WRAPPER] TensorBoard logging to: {tb_log_dir}")
+
         # --- DummyVecEnv Initialization ---
         class DummyGymEnv(gym.Env):
             def __init__(self, obs_space, act_space):
@@ -65,7 +85,6 @@ class WorldModelWrapper(DummyVecEnv):
         )
 
         # --- Dynamic Model Loading Setup ---
-        self.shared_folder = shared_folder
         self.model_path = os.path.join(self.shared_folder, "model.pth")
         self.nn_model = None
         self.latest_mod_time = None
@@ -184,6 +203,8 @@ class WorldModelWrapper(DummyVecEnv):
                 with self.model_lock:
                     self.nn_model = new_model
                 self.latest_mod_time = current_mod_time
+                self.model_load_count += 1
+
                 print(
                     f"[{datetime.now()}] Successfully loaded model updated at {time.ctime(current_mod_time)}"
                 )
@@ -220,6 +241,7 @@ class WorldModelWrapper(DummyVecEnv):
             reward_tensor = outputs[:, self.state_size]
 
             self.step_count += 1
+            self.step_count_global += 1
             self.infos = [{} for _ in range(self.num_envs)]
             self.terminated = np.zeros(self.num_envs, dtype=bool)
 
@@ -230,6 +252,7 @@ class WorldModelWrapper(DummyVecEnv):
                 next_state_tensor = torch.from_numpy(self.reset())
 
             # --- NaN/inf check and clamping ---
+            nan_detected = False
             if (
                 torch.isnan(next_state_tensor).any()
                 or torch.isinf(next_state_tensor).any()
@@ -244,6 +267,7 @@ class WorldModelWrapper(DummyVecEnv):
                     posinf=self.obs_clip_range,
                     neginf=-self.obs_clip_range,
                 )
+                nan_detected = True
 
             clamped_next_state = torch.clamp(
                 next_state_tensor, -self.obs_clip_range, self.obs_clip_range
@@ -253,6 +277,48 @@ class WorldModelWrapper(DummyVecEnv):
             )
 
             self.state = clamped_next_state
+
+            # --- TensorBoard Logging ---
+            current_time = time.time()
+            if current_time - self.last_log_time >= self.log_frequency:
+                # Log prediction statistics
+                self.writer.add_scalar(
+                    "Predictions/Mean_Reward",
+                    torch.mean(clamped_reward).item(),
+                    self.step_count_global,
+                )
+                self.writer.add_scalar(
+                    "Predictions/Std_Reward",
+                    torch.std(clamped_reward).item(),
+                    self.step_count_global,
+                )
+
+                # Log state statistics
+                state_mean = torch.mean(clamped_next_state, dim=0)
+                state_std = torch.std(clamped_next_state, dim=0)
+                for i in range(self.state_size):
+                    self.writer.add_scalar(
+                        f"State/Mean_State_{i}",
+                        state_mean[i].item(),
+                        self.step_count_global,
+                    )
+                    self.writer.add_scalar(
+                        f"State/Std_State_{i}",
+                        state_std[i].item(),
+                        self.step_count_global,
+                    )
+
+                # Log environment metrics
+                self.writer.add_scalar(
+                    "Environment/Episode_Steps", self.step_count, self.step_count_global
+                )
+                self.writer.add_scalar(
+                    "Environment/Total_Steps",
+                    self.step_count_global,
+                    self.step_count_global,
+                )
+
+                self.last_log_time = current_time
 
         return (
             clamped_next_state.numpy(),
@@ -319,5 +385,8 @@ class WorldModelWrapper(DummyVecEnv):
         self.model_watcher_thread.join(timeout=5)
         if self.model_watcher_thread.is_alive():
             print("Warning: Model watcher thread did not shut down cleanly.")
+        # Close TensorBoard writer
+        self.writer.close()
+        print(f"[WORLD-MODEL-WRAPPER] TensorBoard logs saved to: {self.writer.log_dir}")
         # No super().close() needed as the dummy envs don't need closing.
         print("WorldModelWrapper closed.")
