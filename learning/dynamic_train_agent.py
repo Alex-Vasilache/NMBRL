@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
-from utils.tools import seed_everything
+from utils.tools import seed_everything, save_config_to_shared_folder
 
 from stable_baselines3.common.callbacks import (
     EvalCallback,
@@ -43,6 +43,11 @@ def main():
     global_config = config["global"]
     agent_config = config["agent_trainer"]
     agent_type = agent_config.get("agent_type", "PPO").upper()
+
+    # Save config to shared folder for reproducibility
+    save_config_to_shared_folder(
+        config, args.config, args.shared_folder, "agent_trainer"
+    )
 
     # seed everything
     seed_everything(global_config["seed"])

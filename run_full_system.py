@@ -5,7 +5,7 @@ import threading
 import datetime
 import yaml  # Import the YAML library
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
-from utils.tools import seed_everything
+from utils.tools import seed_everything, save_config_to_shared_folder
 
 
 def stream_watcher(identifier, stream):
@@ -42,6 +42,9 @@ def run_system():
     shared_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
     os.makedirs(shared_folder, exist_ok=True)
     print(f"--- Created unique folder for this run: {shared_folder} ---")
+
+    # Save the config to the shared folder for reproducibility
+    save_config_to_shared_folder(config, config_path, shared_folder, "full_system")
 
     stop_file_path = os.path.join(shared_folder, "stop_signal.tmp")
 

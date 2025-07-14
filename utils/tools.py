@@ -994,9 +994,64 @@ def recursively_collect_optim_state_dict(
 
 
 def recursively_load_optim_state_dict(obj, optimizers_state_dicts):
-    for path, state_dict in optimizers_state_dicts.items():
-        keys = path.split(".")
-        obj_now = obj
-        for key in keys:
-            obj_now = getattr(obj_now, key)
-        obj_now.load_state_dict(state_dict)
+    for key, value in optimizers_state_dicts.items():
+        keys = key.split(".")
+        temp_obj = obj
+        for k in keys[:-1]:
+            temp_obj = getattr(temp_obj, k)
+        optimizer = getattr(temp_obj, keys[-1])
+        optimizer.load_state_dict(value)
+
+
+def save_config_to_shared_folder(
+    config, config_file_path, shared_folder, component_name
+):
+    """
+    Save the YAML configuration file to the shared folder for reproducibility.
+
+    Args:
+        config (dict): The loaded configuration dictionary
+        config_file_path (str): Path to the original config file
+        shared_folder (str): Path to the shared folder
+        component_name (str): Name of the component (e.g., 'data_generator', 'world_model_trainer')
+    """
+    import yaml
+    import shutil
+    from datetime import datetime
+
+    # Create configs subdirectory in shared folder
+    config_dir = os.path.join(shared_folder, "configs")
+    os.makedirs(config_dir, exist_ok=True)
+
+    # Generate timestamp for unique identification
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Save the loaded config with component info and timestamp
+    config_with_metadata = {
+        "metadata": {
+            "component": component_name,
+            "timestamp": timestamp,
+            "original_config_path": os.path.abspath(config_file_path),
+            "shared_folder": os.path.abspath(shared_folder),
+        },
+        "config": config,
+    }
+
+    # Save processed config with metadata
+    processed_config_path = os.path.join(
+        config_dir, f"config_{component_name}_{timestamp}.yaml"
+    )
+    with open(processed_config_path, "w") as f:
+        yaml.dump(config_with_metadata, f, default_flow_style=False, indent=2)
+
+    # Also copy the original config file
+    original_config_name = os.path.basename(config_file_path)
+    original_config_copy = os.path.join(config_dir, f"original_{original_config_name}")
+    shutil.copy2(config_file_path, original_config_copy)
+
+    print(f"[{component_name.upper()}] Config saved to: {processed_config_path}")
+    print(
+        f"[{component_name.upper()}] Original config copied to: {original_config_copy}"
+    )
+
+    return processed_config_path

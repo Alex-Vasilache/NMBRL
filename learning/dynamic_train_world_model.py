@@ -16,7 +16,7 @@ import yaml  # Import the YAML library
 import random
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
-from utils.tools import seed_everything
+from utils.tools import seed_everything, save_config_to_shared_folder
 
 
 def train_model(
@@ -457,6 +457,11 @@ def main():
     buffer_path = os.path.join(args.shared_folder, "buffer.pkl")
     model_save_path = os.path.join(args.shared_folder, "model.pth")
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+
+    # Save config to shared folder for reproducibility
+    save_config_to_shared_folder(
+        config, args.config, args.shared_folder, "world_model_trainer"
+    )
 
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})

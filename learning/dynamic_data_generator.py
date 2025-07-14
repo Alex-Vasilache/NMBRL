@@ -12,7 +12,7 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
-from utils.tools import seed_everything
+from utils.tools import seed_everything, save_config_to_shared_folder
 
 
 def write_to_buffer(buffer_path: str, data: Any) -> None:
@@ -192,6 +192,9 @@ if __name__ == "__main__":
     stop_file_path = os.path.join(shared_folder, "stop_signal.tmp")
 
     os.makedirs(os.path.dirname(buffer_path), exist_ok=True)
+
+    # Save config to shared folder for reproducibility
+    save_config_to_shared_folder(config, args.config, shared_folder, "data_generator")
 
     # Clean up stop file from previous runs at startup
     if os.path.exists(stop_file_path):
