@@ -105,7 +105,10 @@ class ActorWrapper:
     def _find_latest_model(self):
         """Finds the latest model .zip"""
         # The Agent trainer saves models in the 'checkpoints' subfolder
-        checkpoints_dir = os.path.join(self.agent_folder, "checkpoints")
+        checkpoints_dir = os.path.join(
+            os.path.dirname(self.agent_folder), "checkpoints"
+        )
+        # print(f"[ACTOR-WRAPPER] Checking for latest model in {checkpoints_dir}")
         try:
             files_in_dir = os.listdir(checkpoints_dir)
         except (FileNotFoundError, NotADirectoryError):

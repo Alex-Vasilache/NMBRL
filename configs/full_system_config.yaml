@@ -12,7 +12,7 @@ tensorboard:
 # Configuration for the main run_full_system.py script
 run_system:
   head_start_seconds: 1
-  create_new_consoles: false # If false, output will be piped to the main console
+  create_new_consoles: true # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
@@ -77,7 +77,7 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 256               # Number of neurons in each layer # todo 32-64
+  units: 512               # Number of neurons in each layer # todo 32-64
 
   # Logging
   save_frequency: 200  # Save models every N episodes (None to disable)
