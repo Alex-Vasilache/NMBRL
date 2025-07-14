@@ -53,10 +53,36 @@ def train_model(
     num_samples = dataset[0].shape[0]
     shuffled_indices = torch.randperm(num_samples)
 
-    model.valid_init_state = torch.tensor(
+    # Extract new initial states from current dataset
+    new_init_states = torch.tensor(
         dataset[0][shuffled_indices][:, : model.state_size], dtype=torch.float32
     )
-    # print(f"Valid init state: {model.valid_init_state.shape}")
+
+    # Accumulate valid initial states over time instead of overwriting
+    if (
+        hasattr(model, "valid_init_state")
+        and model.valid_init_state is not None
+        and model.valid_init_state.numel() > 0
+    ):
+        # Concatenate with existing states
+        combined_states = torch.cat([model.valid_init_state, new_init_states], dim=0)
+
+        # Optional: limit buffer size to prevent unlimited growth
+        max_buffer_size = trainer_config.get("max_valid_init_buffer_size", 10000)
+        if combined_states.shape[0] > max_buffer_size:
+            # Keep the most recent states
+            combined_states = combined_states[-max_buffer_size:]
+
+        model.valid_init_state = combined_states
+        print(
+            f"[TRAINER] Updated valid_init_state buffer: {model.valid_init_state.shape[0]} states (added {new_init_states.shape[0]} new)"
+        )
+    else:
+        # First time initialization
+        model.valid_init_state = new_init_states
+        print(
+            f"[TRAINER] Initialized valid_init_state buffer: {model.valid_init_state.shape[0]} states"
+        )
 
     # Unpack dataset
     X, y = dataset

@@ -23,6 +23,7 @@ data_generator:
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
+  max_valid_init_buffer_size: 1000000  # Adjust as needed
   # Training trigger settings
   new_data_threshold: 1000
   watcher_interval_seconds: 1
