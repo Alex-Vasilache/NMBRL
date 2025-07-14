@@ -4,7 +4,7 @@ import os
 import threading
 import datetime
 import yaml  # Import the YAML library
-from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+
 from utils.tools import seed_everything, save_config_to_shared_folder
 
 
@@ -50,6 +50,15 @@ def run_system():
 
     # --- Get environment dimensions ---
     print("--- Getting environment dimensions ---")
+    if config["global"]["env_type"] == "dmc":
+        from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+    elif config["global"]["env_type"] == "physical":
+        from world_models.physical_cartpole_wrapper import (
+            PhysicalCartpoleWrapper as wrapper,
+        )
+    else:
+        raise ValueError(f"Invalid environment type: {config['global']['env_type']}")
+
     sim_env = wrapper(seed=config["global"]["seed"], n_envs=1)
     sim_env.reset()  # This is crucial to initialize the spaces
     if sim_env.observation_space is None or sim_env.action_space is None:
@@ -69,6 +78,8 @@ def run_system():
         shared_folder,
         "--config",
         config_path,
+        "--env-type",
+        config["global"]["env_type"],
     ]
     world_model_trainer_command = [
         "python",
@@ -82,6 +93,8 @@ def run_system():
         str(action_size),
         "--config",
         config_path,
+        "--env-type",
+        config["global"]["env_type"],
     ]
     agent_trainer_command = [
         "python",
@@ -91,6 +104,8 @@ def run_system():
         shared_folder,
         "--config",
         config_path,
+        "--env-type",
+        config["global"]["env_type"],
     ]
 
     generator_proc = None

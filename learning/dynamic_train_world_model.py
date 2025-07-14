@@ -465,6 +465,13 @@ def main():
         required=True,
         help="Path to the YAML configuration file.",
     )
+    parser.add_argument(
+        "--env-type",
+        type=str,
+        required=False,
+        help="Type of environment to use. Options: 'dmc', 'physical'.",
+        default="dmc",
+    )
     args = parser.parse_args()
 
     # Load configuration from YAML file

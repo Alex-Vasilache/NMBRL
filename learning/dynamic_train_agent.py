@@ -7,7 +7,8 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 
 from agents.actor_wrapper import ActorWrapper
-from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+
+# from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
 from utils.tools import seed_everything, save_config_to_shared_folder
 
@@ -34,6 +35,14 @@ def main():
         required=True,
         help="Path to the YAML configuration file.",
     )
+    parser.add_argument(
+        "--env-type",
+        type=str,
+        required=False,
+        help="Type of environment to use. Options: 'dmc', 'physical'.",
+        default="dmc",
+    )
+
     args = parser.parse_args()
 
     # --- Load configuration from YAML file ---
@@ -67,7 +76,17 @@ def main():
     # Create a temporary real environment just to get the observation and action spaces
     # This env is then closed and not used for training.
     print("--- Creating environment to extract space info ---")
+    if args.env_type == "dmc":
+        from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+    elif args.env_type == "physical":
+        from world_models.physical_cartpole_wrapper import (
+            PhysicalCartpoleWrapper as wrapper,
+        )
+    else:
+        raise ValueError(f"Invalid environment type: {args.env_type}")
+
     temp_real_env = wrapper(seed=global_config["seed"], n_envs=1)
+
     obs_space = temp_real_env.observation_space
     act_space = temp_real_env.action_space
     temp_real_env.close()

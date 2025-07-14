@@ -11,7 +11,6 @@ import time
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
-from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from utils.tools import seed_everything, save_config_to_shared_folder
 
 
@@ -65,6 +64,12 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     print(f"[GENERATOR] TensorBoard logging to: {tb_log_dir}")
 
     # Create the base environment that the ActorWrapper will manage
+    if args.env_type == "dmc":
+        from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+    elif args.env_type == "physical":
+        from world_models.physical_cartpole_wrapper import (
+            PhysicalCartpoleWrapper as wrapper,
+        )
     base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
@@ -102,13 +107,23 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
             # Get the latest actor and environment from the wrapper
             actor_model = actor_wrapper.get_model()
 
-            action, _ = actor_model.predict(state, deterministic=False)
+            # Extract state from vectorized environment (first and only environment)
+            # For single environment, state is a numpy array from the vectorized env
+            if hasattr(state, "__len__") and len(state) > 0:
+                state_obs = state[0]  # First (and only) environment observation
+            else:
+                state_obs = state
 
-            inp_data[:state_size] = state[0]
+            action, _ = actor_model.predict(state_obs, deterministic=False)
+            inp_data[:state_size] = state_obs
             inp_data[state_size] = action[0, 0]
             next_state, reward, terminated, info = env.step(action)
 
-            outp_data[:state_size] = next_state[0]
+            # Extract next state from vectorized environment
+            next_state_obs = (
+                next_state[0] if isinstance(next_state, tuple) else next_state
+            )
+            outp_data[:state_size] = next_state_obs
             outp_data[state_size] = reward[0]
             outp_data[state_size + 1] = terminated[0]
             state = next_state
@@ -175,6 +190,13 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="Path to the YAML configuration file.",
+    )
+    parser.add_argument(
+        "--env-type",
+        type=str,
+        required=False,
+        help="Type of environment to use. Options: 'dmc', 'physical'.",
+        default="dmc",
     )
     args = parser.parse_args()
 
