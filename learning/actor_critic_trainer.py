@@ -106,12 +106,6 @@ class ActorCriticTrainer:
             "act": config.get("act"),
             "norm": config.get("norm"),
         }
-        metric_dict = {
-            "final_avg_reward": 0.0,  # Will be updated at the end of training
-            "final_best_reward": 0.0,
-            "total_episodes": config.get("num_epochs", 100),
-        }
-        self.writer.add_hparams(hparam_dict, metric_dict)
 
         self.fill_initial_state_buffer(
             num_states=self.config.get("batch_size") * self.config.get("batch_length"),

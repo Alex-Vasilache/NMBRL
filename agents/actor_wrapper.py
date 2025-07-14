@@ -38,6 +38,11 @@ class ActorWrapper:
         self.agent_folder = os.path.join(self.shared_folder, "actor_logs")
         self.env = env
         self.config = config
+        # Use shared TensorBoard logs directory
+        tb_config = self.config.get("tensorboard", {})
+        self.tb_log_dir = os.path.join(
+            self.shared_folder, tb_config.get("log_dir", "tb_logs")
+        )
         self.agent_type = (
             self.config.get("agent_trainer", {}).get("agent_type", "PPO").upper()
         )
@@ -63,7 +68,7 @@ class ActorWrapper:
                     self.env,
                     verbose=self.config["agent_trainer"]["verbose"],
                     seed=self.config["global"]["seed"],
-                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                    tensorboard_log=self.tb_log_dir,
                 )
             elif self.agent_type == "SAC":
                 from stable_baselines3 import SAC
@@ -73,7 +78,7 @@ class ActorWrapper:
                     self.env,
                     verbose=self.config["agent_trainer"]["verbose"],
                     seed=self.config["global"]["seed"],
-                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                    tensorboard_log=self.tb_log_dir,
                 )
             elif self.agent_type == "DREAMER":
                 from agents.dreamer_ac_agent import DreamerACAgent
@@ -81,7 +86,7 @@ class ActorWrapper:
                 self.model = DreamerACAgent(
                     self.config,
                     self.env,
-                    tensorboard_log=os.path.join(self.agent_folder, "tensorboard"),
+                    tensorboard_log=self.tb_log_dir,
                 )
             else:
                 raise ValueError(f"Unknown agent type: {self.agent_type}")

@@ -106,7 +106,7 @@ def load_run_config(run_dir):
     return {
         "global": {"seed": 42},
         "data_generator": {"max_episode_steps": 1000},
-        "tensorboard": {"log_dir": "tensorboard_logs", "flush_seconds": 30},
+        "tensorboard": {"log_dir": "tb_logs", "flush_seconds": 30},
     }
 
 
@@ -330,7 +330,7 @@ def main():
     tb_config = config.get("tensorboard", {})
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tb_log_dir = os.path.join(
-        run_dir, tb_config.get("log_dir", "tensorboard_logs"), f"evaluation_{timestamp}"
+        run_dir, tb_config.get("log_dir", "tb_logs"), f"evaluation_{timestamp}"
     )
     os.makedirs(tb_log_dir, exist_ok=True)
     writer = SummaryWriter(

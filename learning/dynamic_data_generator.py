@@ -55,9 +55,7 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config: dict):
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})
-    tb_log_dir = os.path.join(
-        shared_folder, tb_config.get("log_dir", "tensorboard_logs"), "data_generator"
-    )
+    tb_log_dir = os.path.join(shared_folder, tb_config.get("log_dir", "tb_logs"))
     os.makedirs(tb_log_dir, exist_ok=True)
     writer = SummaryWriter(
         log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)
@@ -132,8 +130,10 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                 )
 
                 # Log episode statistics to TensorBoard
-                writer.add_scalar("Episode/Reward", episode_reward, episode_count)
-                writer.add_scalar("Episode/Total_Steps", total_steps, episode_count)
+                writer.add_scalar(
+                    "DataGen/Episode_Reward", episode_reward, episode_count
+                )
+                writer.add_scalar("DataGen/Total_Steps", total_steps, episode_count)
 
                 state = env.reset()
                 episode_reward = 0
@@ -147,11 +147,9 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                     current_time - data_generation_start_time
                 )
                 writer.add_scalar(
-                    "DataGeneration/Steps_Per_Second", data_generation_rate, total_steps
+                    "DataGen/Steps_Per_Second", data_generation_rate, total_steps
                 )
-                writer.add_scalar(
-                    "DataGeneration/Total_Episodes", episode_count, total_steps
-                )
+                writer.add_scalar("DataGen/Total_Episodes", episode_count, total_steps)
 
                 last_log_time = current_time
 

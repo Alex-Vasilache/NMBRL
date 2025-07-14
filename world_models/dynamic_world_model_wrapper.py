@@ -49,11 +49,7 @@ class WorldModelWrapper(DummyVecEnv):
         # --- TensorBoard Setup ---
         self.shared_folder = shared_folder
         tb_config = self.config.get("tensorboard", {})
-        tb_log_dir = os.path.join(
-            shared_folder,
-            tb_config.get("log_dir", "tensorboard_logs"),
-            "world_model_wrapper",
-        )
+        tb_log_dir = os.path.join(shared_folder, tb_config.get("log_dir", "tb_logs"))
         os.makedirs(tb_log_dir, exist_ok=True)
         self.writer = SummaryWriter(
             log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)
@@ -283,12 +279,12 @@ class WorldModelWrapper(DummyVecEnv):
             if current_time - self.last_log_time >= self.log_frequency:
                 # Log prediction statistics
                 self.writer.add_scalar(
-                    "Predictions/Mean_Reward",
+                    "Wrapper/Predictions_Mean_Reward",
                     torch.mean(clamped_reward).item(),
                     self.step_count_global,
                 )
                 self.writer.add_scalar(
-                    "Predictions/Std_Reward",
+                    "Wrapper/Predictions_Std_Reward",
                     torch.std(clamped_reward).item(),
                     self.step_count_global,
                 )
@@ -298,22 +294,24 @@ class WorldModelWrapper(DummyVecEnv):
                 state_std = torch.std(clamped_next_state, dim=0)
                 for i in range(self.state_size):
                     self.writer.add_scalar(
-                        f"State/Mean_State_{i}",
+                        f"Wrapper/State_Mean_{i}",
                         state_mean[i].item(),
                         self.step_count_global,
                     )
                     self.writer.add_scalar(
-                        f"State/Std_State_{i}",
+                        f"Wrapper/State_Std_{i}",
                         state_std[i].item(),
                         self.step_count_global,
                     )
 
                 # Log environment metrics
                 self.writer.add_scalar(
-                    "Environment/Episode_Steps", self.step_count, self.step_count_global
+                    "Wrapper/Environment_Episode_Steps",
+                    self.step_count,
+                    self.step_count_global,
                 )
                 self.writer.add_scalar(
-                    "Environment/Total_Steps",
+                    "Wrapper/Environment_Total_Steps",
                     self.step_count_global,
                     self.step_count_global,
                 )

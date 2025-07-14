@@ -5,7 +5,7 @@ global:
   
 # TensorBoard logging configuration
 tensorboard:
-  log_dir: "tensorboard_logs"
+  log_dir: "tb_logs"
   log_frequency: 10  # Log every N steps/episodes
   flush_seconds: 30  # Flush logs every N seconds
 
