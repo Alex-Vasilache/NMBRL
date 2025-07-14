@@ -6,7 +6,7 @@ global:
 # Configuration for the main run_full_system.py script
 run_system:
   head_start_seconds: 1
-  create_new_consoles: true # If false, output will be piped to the main console
+  create_new_consoles: false # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
@@ -53,7 +53,7 @@ agent_trainer:
 # Configuration for learning/dynamic_train_agent_dreamer.py
 dreamer_agent_trainer:
   # Training
-  num_epochs: 100000
+  num_epochs: 1000000
   batch_size: 16
   learning_rate: 3e-5
   eps: 1e-5
@@ -70,12 +70,12 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 128               # Number of neurons in each layer # todo 32-64
+  units: 256               # Number of neurons in each layer # todo 32-64
 
   # Logging
-  save_frequency: 100  # Save models every N episodes (None to disable)
-  eval_frequency: 100  # Evaluate every N episodes (None to disable)
-  print_frequency: 10  # Print every N episodes (None to disable)
+  save_frequency: 200  # Save models every N episodes (None to disable)
+  eval_frequency: 200  # Evaluate every N episodes (None to disable)
+  print_frequency: 100  # Print every N episodes (None to disable)
 
   # Evaluation (runs at same frequency as saves)
   eval_episodes: 5  # Number of episodes for intermediate evaluation
@@ -83,7 +83,7 @@ dreamer_agent_trainer:
 
   # Actor
   actor:
-    layers: 2 # todo 2
+    layers: 3 # todo 2
     dist: 'normal' # maybe TanhBijector or tanh_normal
     entropy: 3e-4
     unimix_ratio: 0.01
@@ -96,7 +96,7 @@ dreamer_agent_trainer:
 
   # Critic
   critic:
-    layers: 2 # todo 2
+    layers: 3 # todo 2
     dist: 'symlog_disc'
     outscale: 0.0
     slow_target: True
