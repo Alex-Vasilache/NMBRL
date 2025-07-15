@@ -46,6 +46,22 @@ from stable_baselines3.common.monitor import Monitor
 import sys
 import os
 
+ACTION_SCALE = 0.7
+
+_high = np.array(
+    [
+        np.pi,  # θ
+        np.inf,  # θ̇
+        1.0,
+        1.0,  # sin θ, cos θ
+        0.2,  # x
+        np.inf,  # ẋ
+    ],
+    dtype=np.float32,
+)
+ACTION_SPACE = spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
+OBSERVATION_SPACE = spaces.Box(-_high, _high, dtype=np.float32)
+
 # Try to import CartPoleEnv, handling case where physical cartpole might not be available
 try:
     physical_cartpole_path = os.path.join(
@@ -76,7 +92,7 @@ class DMCRewardTask:
 
     def __init__(self, physics):
         self.physics = physics
-        self._CART_RANGE = (-0.25, 0.25)
+        self._CART_RANGE = (-0.2, 0.2)
         self._ANGLE_COSINE_RANGE = (0.995, 1)
         self.sparse = False  # Use smooth reward by default
 
@@ -181,7 +197,7 @@ class PhysicalCartPoleWrapper(gym.Env):
         self.env = CartPoleEnv(
             render_mode=render_mode,
             task="swingup",  # Use swingup task as base
-            cartpole_type="custom_sim",  # Use remote for physical cartpole
+            cartpole_type="remote",  # Use remote for physical cartpole
         )
 
         self.render_mode = render_mode
@@ -203,6 +219,25 @@ class PhysicalCartPoleWrapper(gym.Env):
 
     def step(self, action):
         # Step the underlying environment
+
+        action = np.clip(
+            action,
+            self.env.action_space.low * ACTION_SCALE,
+            self.env.action_space.high * ACTION_SCALE,
+        )
+
+        current_position = self.env.state[4]
+
+        if current_position > self.env.cartpole_rl.x_limit * 0.7 and action[0] > 0:
+            action = [-0.1]
+        elif current_position < -self.env.cartpole_rl.x_limit * 0.7 and action[0] < 0:
+            action = [0.1]
+
+        if current_position > self.env.cartpole_rl.x_limit * 0.85 and action[0] > 0:
+            action = [0.2]
+        elif current_position < -self.env.cartpole_rl.x_limit * 0.85 and action[0] < 0:
+            action = [-0.2]
+
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         # Replace the reward with DMC-style reward
@@ -220,6 +255,17 @@ class PhysicalCartPoleWrapper(gym.Env):
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
     ):
+        current_position = self.env.state[4]
+        while current_position > 0:
+            self.env.step([-0.1])
+            current_position = self.env.state[4]
+
+        while current_position < 0:
+            self.env.step([0.1])
+            current_position = self.env.state[4]
+
+        print(f"Current position: {current_position}")
+
         return self.env.reset(seed=seed, options=options)
 
     def render(self):
@@ -231,7 +277,7 @@ class PhysicalCartPoleWrapper(gym.Env):
 
 
 def make_physical_cartpole_env(
-    render_mode: str = "none", max_episode_steps: int = 1000
+    render_mode: str = None, max_episode_steps: int = 1000
 ) -> Callable[[], gym.Env]:
     def _init() -> gym.Env:
         env = PhysicalCartPoleWrapper(
@@ -254,7 +300,7 @@ class PhysicalCartpoleWrapper(VecNormalize):
         self,
         seed: int = 42,
         n_envs: int = 1,
-        render_mode: str = "none",
+        render_mode: str = None,
         max_episode_steps: int = 1000,
     ):
         self.n_envs = n_envs
@@ -272,7 +318,7 @@ class PhysicalCartpoleWrapper(VecNormalize):
 
         super().__init__(
             vec_env,
-            norm_obs=True,
+            norm_obs=False,
             norm_reward=False,
             clip_obs=10.0,
         )

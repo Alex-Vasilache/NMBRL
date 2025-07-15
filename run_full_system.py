@@ -51,22 +51,15 @@ def run_system():
     # --- Get environment dimensions ---
     print("--- Getting environment dimensions ---")
     if config["global"]["env_type"] == "dmc":
-        from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+        state_size = 5
+        action_size = 1
     elif config["global"]["env_type"] == "physical":
-        from world_models.physical_cartpole_wrapper import (
-            PhysicalCartpoleWrapper as wrapper,
-        )
+        state_size = 6
+        action_size = 1
     else:
         raise ValueError(f"Invalid environment type: {config['global']['env_type']}")
 
-    sim_env = wrapper(seed=config["global"]["seed"], n_envs=1)
-    sim_env.reset()  # This is crucial to initialize the spaces
-    if sim_env.observation_space is None or sim_env.action_space is None:
-        raise RuntimeError("Environment spaces were not initialized correctly.")
-    state_size = sim_env.observation_space.shape[0]
-    action_size = sim_env.action_space.shape[0]
     print(f"State size: {state_size}, Action size: {action_size}")
-    sim_env.close()
 
     # --- Commands to run ---
     # All scripts now receive the path to the config file

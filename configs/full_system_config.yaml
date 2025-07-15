@@ -1,8 +1,8 @@
 # Global configuration for the entire run
 global:
-  seed: 42
+  seed: 41
   run_folder_prefix: "runs"
-  env_type: "dmc" # "dmc" or "physical"
+  env_type: "physical" # "dmc" or "physical"
   
 # TensorBoard logging configuration
 tensorboard:
@@ -13,12 +13,12 @@ tensorboard:
 # Configuration for the main run_full_system.py script
 run_system:
   head_start_seconds: 1
-  create_new_consoles: false # If false, output will be piped to the main console
+  create_new_consoles: true # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
   max_episode_steps: 100000
-  actor_check_interval_seconds: 5
+  actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
 
@@ -34,7 +34,7 @@ world_model_trainer:
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.00001
+  learning_rate: 0.001
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -44,7 +44,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 256
+  n_envs: 128
   max_episode_steps: 100
   # Training run settings
   total_timesteps: 10000000
@@ -62,8 +62,8 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 256
-  learning_rate: 3e-4
+  batch_size: 128
+  learning_rate: 1e-4
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
   reward_EMA: True
@@ -99,7 +99,7 @@ dreamer_agent_trainer:
     min_std: 0.1
     max_std: 1.0
     temp: 0.1
-    outscale: 1.0  # try 0.01
+    outscale: 0.1  # try 0.01
     imag_grad: 'reinforce'
 
   # Critic

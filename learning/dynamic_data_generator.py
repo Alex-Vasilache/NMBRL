@@ -73,7 +73,7 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
-        render_mode="human",
+        render_mode=None,
         max_episode_steps=config["data_generator"]["max_episode_steps"],
     )
 
@@ -108,13 +108,25 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
             actor_model = actor_wrapper.get_model()
 
             # Extract state from vectorized environment (first and only environment)
-            # For single environment, state is a numpy array from the vectorized env
-            if hasattr(state, "__len__") and len(state) > 0:
-                state_obs = state[0]  # First (and only) environment observation
-            else:
-                state_obs = state
+            # For single environment, handle vectorized environment observation format
+            try:
+                # Vectorized environments return observations as arrays/tuples
+                if isinstance(state, (tuple, list)) and len(state) > 0:
+                    state_obs = (
+                        np.array(state[0])
+                        if not isinstance(state[0], np.ndarray)
+                        else state[0]
+                    )
+                elif isinstance(state, np.ndarray):
+                    state_obs = state
+                else:
+                    state_obs = np.array(state)
 
-            action, _ = actor_model.predict(state_obs, deterministic=False)
+                action, _ = actor_model.predict(state_obs, deterministic=False)
+            except Exception as e:
+                print(f"Error processing state observation: {e}")
+                print(f"State type: {type(state)}, State: {state}")
+                continue
             inp_data[:state_size] = state_obs
             inp_data[state_size] = action[0, 0]
             next_state, reward, terminated, info = env.step(action)
@@ -130,10 +142,10 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
 
             env.render()
 
-            sim_should_stop = info[0].get("sim_should_stop", False)
-            if sim_should_stop:
-                print("[GENERATOR] Render window closed by user, stopping generation.")
-                stop_event.set()
+            # sim_should_stop = info[0].get("sim_should_stop", False)
+            # if sim_should_stop:
+            #     print("[GENERATOR] Render window closed by user, stopping generation.")
+            #     stop_event.set()
 
             episode_reward += reward[0]
             episode_length += 1

@@ -78,18 +78,25 @@ def main():
     print("--- Creating environment to extract space info ---")
     if args.env_type == "dmc":
         from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
+
+        temp_real_env = wrapper(seed=global_config["seed"], n_envs=1)
+
+        obs_space = temp_real_env.observation_space
+        act_space = temp_real_env.action_space
+        temp_real_env.close()
+
     elif args.env_type == "physical":
         from world_models.physical_cartpole_wrapper import (
-            PhysicalCartpoleWrapper as wrapper,
+            ACTION_SPACE,
+            OBSERVATION_SPACE,
         )
+
+        obs_space = OBSERVATION_SPACE
+        act_space = ACTION_SPACE
+
     else:
         raise ValueError(f"Invalid environment type: {args.env_type}")
 
-    temp_real_env = wrapper(seed=global_config["seed"], n_envs=1)
-
-    obs_space = temp_real_env.observation_space
-    act_space = temp_real_env.action_space
-    temp_real_env.close()
     print(f"Obs space: {obs_space}, Action space: {act_space}")
 
     # Ensure action_space is Box type for WorldModelWrapper

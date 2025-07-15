@@ -1,5 +1,6 @@
 import os
 import threading
+import numpy as np
 from stable_baselines3.common.callbacks import CallbackList
 
 
@@ -8,9 +9,34 @@ class RandomPolicy:
 
     def __init__(self, action_space):
         self.action_space = action_space
+        self.previous_action = None
 
     def predict(self, obs, deterministic=False):
-        return self.action_space.sample().reshape(1, -1), None
+        if self.previous_action is None:
+            # First action - can be anywhere in action space
+            action = self.action_space.sample().reshape(1, -1)
+        else:
+            # Ensure change doesn't exceed 0.5
+            max_change = 0.4
+            # Sample a change within [-0.5, 0.5]
+            change = np.random.uniform(
+                -max_change, max_change, size=self.previous_action.shape
+            )
+            # Apply change to previous action
+            new_action = self.previous_action + change
+            # Clamp to action space bounds
+            action = np.clip(
+                new_action,
+                self.action_space.low * 0.7,
+                self.action_space.high * 0.7,
+            )
+            action = action.reshape(1, -1)
+
+        # Ensure correct dtype to match action space
+        action = action.astype(self.action_space.dtype)
+
+        self.previous_action = action.copy()
+        return action, None
 
     def learn(
         self,
