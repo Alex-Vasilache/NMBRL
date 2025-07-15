@@ -11,3 +11,4 @@ stable-baselines3[extra]
 portalocker
 psutil
 tqdm
+keyboard
