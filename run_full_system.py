@@ -123,54 +123,102 @@ def run_system():
 
     # --- Commands to run ---
     # All scripts now receive the path to the config file
-    generator_command = [
-        "python",
-        "-m",
-        "learning.dynamic_data_generator",
-        "--shared-folder",
-        shared_folder,
-        "--config",
-        config_path,
-        "--env-type",
-        config["global"]["env_type"],
-    ]
-    world_model_trainer_command = [
-        "python",
-        "-m",
-        "learning.dynamic_train_world_model",
-        "--shared-folder",
-        shared_folder,
-        "--state-size",
-        str(state_size),
-        "--action-size",
-        str(action_size),
-        "--config",
-        config_path,
-        "--env-type",
-        config["global"]["env_type"],
-    ]
-    agent_trainer_command = [
-        "python",
-        "-m",
-        "learning.dynamic_train_agent",
-        "--shared-folder",
-        shared_folder,
-        "--config",
-        config_path,
-        "--env-type",
-        config["global"]["env_type"],
-    ]
+    # Use platform-specific command formats
+    if os.name == "nt":  # Windows
+        generator_command = [
+            "python",
+            "-u",
+            "learning/dynamic_data_generator.py",
+            "--shared-folder",
+            shared_folder,
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
+        world_model_trainer_command = [
+            "python",
+            "-u",
+            "learning/dynamic_train_world_model.py",
+            "--shared-folder",
+            shared_folder,
+            "--state-size",
+            str(state_size),
+            "--action-size",
+            str(action_size),
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
+        agent_trainer_command = [
+            "python",
+            "-u",
+            "learning/dynamic_train_agent.py",
+            "--shared-folder",
+            shared_folder,
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
+    else:  # Linux/Unix
+        generator_command = [
+            "python",
+            "-m",
+            "learning.dynamic_data_generator",
+            "--shared-folder",
+            shared_folder,
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
+        world_model_trainer_command = [
+            "python",
+            "-m",
+            "learning.dynamic_train_world_model",
+            "--shared-folder",
+            shared_folder,
+            "--state-size",
+            str(state_size),
+            "--action-size",
+            str(action_size),
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
+        agent_trainer_command = [
+            "python",
+            "-m",
+            "learning.dynamic_train_agent",
+            "--shared-folder",
+            shared_folder,
+            "--config",
+            config_path,
+            "--env-type",
+            config["global"]["env_type"],
+        ]
 
     # Add control command for physical cartpole
     control_command = None
     control_cwd = None
     if config["global"]["env_type"] == "physical":
         control_cwd = os.path.join("environments", "physical-cartpole")
-        control_command = [
-            "python",
-            "-m",  # Use module format for cross-platform compatibility
-            "Driver.control",  # Convert path to module format
-        ]
+        if os.name == "nt":  # Windows
+            control_command = [
+                "python",
+                "-u",  # Unbuffered stdout and stderr
+                "-B",  # Don't write .pyc files
+                os.path.join("Driver", "control.py"),
+            ]
+        else:  # Linux/Unix
+            control_command = [
+                "python",
+                "-m",  # Use module format for cross-platform compatibility
+                "Driver.control",  # Convert path to module format
+            ]
 
     generator_proc = None
     world_model_trainer_proc = None
