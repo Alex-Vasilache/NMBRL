@@ -46,8 +46,8 @@ from stable_baselines3.common.monitor import Monitor
 import sys
 import os
 
-MAX_ACTION_CHANGE = 0.4
-MAX_ACTION_SCALE = 0.7
+MAX_ACTION_CHANGE = 0.3
+MAX_ACTION_SCALE = 0.8
 
 _high = np.array(
     [
@@ -223,22 +223,32 @@ class PhysicalCartPoleWrapper(gym.Env):
     def step(self, action):
         # Step the underlying environment
 
+        # Replace the reward with DMC-style reward
+        dmc_reward = self.dmc_task.get_reward(self.env.state, action)
+
         current_position = self.env.state[4]
 
+        temp_scale = -4.0
+
+        # if current_position > self.env.cartpole_rl.x_limit * 0.65 and action[0] > 0:
+        #     action = [0.0 * temp_scale]
+        # elif current_position < -self.env.cartpole_rl.x_limit * 0.65 and action[0] < 0:
+        #     action = [0.0 * temp_scale]
+
         if current_position > self.env.cartpole_rl.x_limit * 0.7 and action[0] > 0:
-            action = [-0.1]
+            action = [0.025 * temp_scale]
         elif current_position < -self.env.cartpole_rl.x_limit * 0.7 and action[0] < 0:
-            action = [0.1]
+            action = [-0.025 * temp_scale]
 
         if current_position > self.env.cartpole_rl.x_limit * 0.8 and action[0] > 0:
-            action = [0.2]
+            action = [0.05 * temp_scale]
         elif current_position < -self.env.cartpole_rl.x_limit * 0.8 and action[0] < 0:
-            action = [-0.2]
+            action = [-0.05 * temp_scale]
 
         if current_position > self.env.cartpole_rl.x_limit * 0.9 and action[0] > 0:
-            action = [0.3]
+            action = [0.1 * temp_scale]
         elif current_position < -self.env.cartpole_rl.x_limit * 0.9 and action[0] < 0:
-            action = [-0.3]
+            action = [-0.1 * temp_scale]
 
         change = np.clip(
             action - self.previous_action, -MAX_ACTION_CHANGE, MAX_ACTION_CHANGE
@@ -260,9 +270,6 @@ class PhysicalCartPoleWrapper(gym.Env):
         self.previous_action = action.copy()
 
         obs, reward, terminated, truncated, info = self.env.step(action)
-
-        # Replace the reward with DMC-style reward
-        dmc_reward = self.dmc_task.get_reward(obs, action)
 
         # Add info about stopping due to window closure
         if hasattr(self.env, "cartpole_rl") and hasattr(

@@ -44,7 +44,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 128
+  n_envs: 64
   max_episode_steps: 100
   # Training run settings
   total_timesteps: 10000000
@@ -62,7 +62,7 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 128
+  batch_size: 64
   learning_rate: 1e-4
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
@@ -78,10 +78,10 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 512               # Number of neurons in each layer # todo 32-64
+  units: 256               # Number of neurons in each layer # todo 32-64
 
   # Logging
-  save_frequency: 200  # Save models every N episodes (None to disable)
+  save_frequency: 100  # Save models every N episodes (None to disable)
   eval_frequency: 200  # Evaluate every N episodes (None to disable)
   print_frequency: 100  # Print every N episodes (None to disable)
 
@@ -99,7 +99,7 @@ dreamer_agent_trainer:
     min_std: 0.1
     max_std: 1.0
     temp: 0.1
-    outscale: 0.1  # try 0.01
+    outscale: 1.0  # try 0.01
     imag_grad: 'reinforce'
 
   # Critic
