@@ -73,7 +73,6 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
-        render_mode=None,
         max_episode_steps=config["data_generator"]["max_episode_steps"],
     )
 

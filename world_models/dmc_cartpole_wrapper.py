@@ -169,7 +169,7 @@ class DMCCartpoleWrapper(VecNormalize):
         self,
         seed: int = 42,
         n_envs: int = 1,
-        render_mode: str = "none",
+        render_mode: str = "human",
         max_episode_steps: int = 1000,
     ):
         self.n_envs = n_envs
@@ -186,9 +186,9 @@ class DMCCartpoleWrapper(VecNormalize):
 
         super().__init__(
             vec_env,
-            norm_obs=True,
+            norm_obs=False,
             norm_reward=False,
-            clip_obs=10.0,
+            clip_obs=100.0,
         )
         self.seed(self._seed)
 
