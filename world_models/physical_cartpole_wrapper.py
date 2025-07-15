@@ -305,7 +305,7 @@ class PhysicalCartPoleWrapper(gym.Env):
 
 
 def make_physical_cartpole_env(
-    render_mode: str = None, max_episode_steps: int = 1000
+    render_mode: Optional[str] = None, max_episode_steps: int = 1000
 ) -> Callable[[], gym.Env]:
     def _init() -> gym.Env:
         env = PhysicalCartPoleWrapper(
@@ -328,7 +328,7 @@ class PhysicalCartpoleWrapper(VecNormalize):
         self,
         seed: int = 42,
         n_envs: int = 1,
-        render_mode: str = None,
+        render_mode: Optional[str] = None,
         max_episode_steps: int = 1000,
     ):
         self.n_envs = n_envs

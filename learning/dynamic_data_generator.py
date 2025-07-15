@@ -75,6 +75,7 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
+        render_mode=None,  # Explicitly set to None for headless environments
         max_episode_steps=config["data_generator"]["max_episode_steps"],
     )
 
@@ -141,7 +142,26 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
             outp_data[state_size + 1] = terminated[0]
             state = next_state
 
-            env.render()
+            # Render environment if enabled and possible
+            render_enabled = config["data_generator"].get("render_enabled", False)
+            if render_enabled:
+                try:
+                    env.render()
+                except Exception as e:
+                    if (
+                        "DISPLAY" in str(e)
+                        or "X11" in str(e)
+                        or "GLFW" in str(e)
+                        or "gladLoadGL" in str(e)
+                    ):
+                        print(
+                            f"[GENERATOR] Warning: Rendering failed (headless environment): {e}"
+                        )
+                        print("[GENERATOR] Continuing without rendering...")
+                        # Disable rendering for future iterations to avoid repeated warnings
+                        config["data_generator"]["render_enabled"] = False
+                    else:
+                        print(f"[GENERATOR] Render error: {e}")
 
             # sim_should_stop = info[0].get("sim_should_stop", False)
             # if sim_should_stop:

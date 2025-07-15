@@ -81,7 +81,7 @@ def main():
     if args.env_type == "dmc":
         from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 
-        temp_real_env = wrapper(seed=global_config["seed"], n_envs=1)
+        temp_real_env = wrapper(seed=global_config["seed"], n_envs=1, render_mode=None)
 
         obs_space = temp_real_env.observation_space
         act_space = temp_real_env.action_space

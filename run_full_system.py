@@ -125,8 +125,8 @@ def run_system():
     # All scripts now receive the path to the config file
     generator_command = [
         "python",
-        "-u",
-        "learning/dynamic_data_generator.py",
+        "-m",
+        "learning.dynamic_data_generator",
         "--shared-folder",
         shared_folder,
         "--config",
@@ -136,8 +136,8 @@ def run_system():
     ]
     world_model_trainer_command = [
         "python",
-        "-u",
-        "learning/dynamic_train_world_model.py",
+        "-m",
+        "learning.dynamic_train_world_model",
         "--shared-folder",
         shared_folder,
         "--state-size",
@@ -151,8 +151,8 @@ def run_system():
     ]
     agent_trainer_command = [
         "python",
-        "-u",
-        "learning/dynamic_train_agent.py",
+        "-m",
+        "learning.dynamic_train_agent",
         "--shared-folder",
         shared_folder,
         "--config",
@@ -168,9 +168,8 @@ def run_system():
         control_cwd = os.path.join("environments", "physical-cartpole")
         control_command = [
             "python",
-            "-u",  # Unbuffered stdout and stderr
-            "-B",  # Don't write .pyc files
-            os.path.join("Driver", "control.py"),
+            "-m",  # Use module format for cross-platform compatibility
+            "Driver.control",  # Convert path to module format
         ]
 
     generator_proc = None

@@ -133,9 +133,22 @@ class DMCWrapper(gym.Env):
                     height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
                 )
         else:
-            return self.env.physics.render(
-                height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
-            )
+            try:
+                return self.env.physics.render(
+                    height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
+                )
+            except Exception as e:
+                # In headless environments, rendering might fail completely
+                if (
+                    "DISPLAY" in str(e)
+                    or "X11" in str(e)
+                    or "GLFW" in str(e)
+                    or "gladLoadGL" in str(e)
+                ):
+                    print(f"Warning: Rendering failed in headless environment: {e}")
+                    return None
+                else:
+                    raise e
 
     def close(self):
         try:
@@ -149,7 +162,7 @@ class DMCWrapper(gym.Env):
 
 
 def make_dmc_env(
-    render_mode: str = "none", max_episode_steps: int = 1000
+    render_mode: Optional[str] = None, max_episode_steps: int = 1000
 ) -> Callable[[], gym.Env]:
     def _init() -> gym.Env:
         env = DMCWrapper(
@@ -169,7 +182,7 @@ class DMCCartpoleWrapper(VecNormalize):
         self,
         seed: int = 42,
         n_envs: int = 1,
-        render_mode: str = "human",
+        render_mode: Optional[str] = None,
         max_episode_steps: int = 1000,
     ):
         self.n_envs = n_envs

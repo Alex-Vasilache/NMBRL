@@ -21,6 +21,7 @@ data_generator:
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
+  render_enabled: false  # Set to false for headless environments, true for local development
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
@@ -47,7 +48,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 128
+  n_envs: 16
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -65,7 +66,7 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 128
+  batch_size: 16
   learning_rate: 1e-4
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
