@@ -60,7 +60,9 @@ class WorldModelWrapper(DummyVecEnv):
         # --- TensorBoard Setup ---
         self.shared_folder = shared_folder
         tb_config = self.config.get("tensorboard", {})
-        tb_log_dir = os.path.join(shared_folder, tb_config.get("log_dir", "tb_logs"))
+        tb_log_dir = os.path.join(
+            shared_folder, tb_config.get("log_dir", "tb_logs"), "world_model_wrapper"
+        )
         os.makedirs(tb_log_dir, exist_ok=True)
         self.writer = SummaryWriter(
             log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)

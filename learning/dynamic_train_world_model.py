@@ -579,7 +579,9 @@ def main():
 
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})
-    tb_log_dir = os.path.join(args.shared_folder, tb_config.get("log_dir", "tb_logs"))
+    tb_log_dir = os.path.join(
+        args.shared_folder, tb_config.get("log_dir", "tb_logs"), "world_model"
+    )
     os.makedirs(tb_log_dir, exist_ok=True)
     writer = SummaryWriter(
         log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)

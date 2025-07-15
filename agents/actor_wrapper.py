@@ -70,7 +70,7 @@ class ActorWrapper:
         # Use shared TensorBoard logs directory
         tb_config = self.config.get("tensorboard", {})
         self.tb_log_dir = os.path.join(
-            self.shared_folder, tb_config.get("log_dir", "tb_logs")
+            self.shared_folder, tb_config.get("log_dir", "tb_logs"), "actor_wrapper"
         )
         self.agent_type = (
             self.config.get("agent_trainer", {}).get("agent_type", "PPO").upper()

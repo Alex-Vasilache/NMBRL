@@ -54,7 +54,9 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
 def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config: dict):
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})
-    tb_log_dir = os.path.join(shared_folder, tb_config.get("log_dir", "tb_logs"))
+    tb_log_dir = os.path.join(
+        shared_folder, tb_config.get("log_dir", "tb_logs"), "data_generator"
+    )
     os.makedirs(tb_log_dir, exist_ok=True)
     writer = SummaryWriter(
         log_dir=tb_log_dir, flush_secs=tb_config.get("flush_seconds", 30)

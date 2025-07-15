@@ -67,7 +67,8 @@ class DreamerACAgent:
         self.training_losses = []
 
         # TensorBoard logging setup
-        self.tb_log_dir = tensorboard_log
+        self.tb_log_dir = os.path.join(tensorboard_log, "dreamer_agent")
+        os.makedirs(self.tb_log_dir, exist_ok=True)
         self.writer = SummaryWriter(log_dir=self.tb_log_dir)
         self.global_step = 0
         self.training_step = 0
@@ -533,7 +534,12 @@ class DreamerACAgent:
         save_frequency = self.config.get("save_frequency")  # Save every N episodes
         eval_frequency = self.config.get("eval_frequency")  # Evaluate every N episodes
         print_frequency = self.config.get("print_frequency")  # Print every N episodes
-        self.save_dir = os.path.join(os.path.dirname(self.tb_log_dir), "checkpoints")
+        self.save_dir = os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(self.tb_log_dir)))
+            ),
+            "checkpoints",
+        )
         os.makedirs(self.save_dir, exist_ok=True)
         self.eval_env = None
 

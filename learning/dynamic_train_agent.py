@@ -68,7 +68,9 @@ def main():
 
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})
-    tb_log_dir = os.path.join(shared_folder, tb_config.get("log_dir", "tb_logs"))
+    tb_log_dir = os.path.join(
+        shared_folder, tb_config.get("log_dir", "tb_logs"), "agent"
+    )
     os.makedirs(tb_log_dir, exist_ok=True)
 
     print(f"[AGENT-TRAINER] TensorBoard logging to: {tb_log_dir}")
