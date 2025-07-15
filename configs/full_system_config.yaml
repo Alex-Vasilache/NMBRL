@@ -34,11 +34,14 @@ world_model_trainer:
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.001
+  learning_rate: 0.00001
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
   lr_factor: 0.3
+  use_scalers: True
+  use_output_state_scaler: False # Agent networks will received normalizedstates in range [-3, 3] if False
+  use_output_reward_scaler: True
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
@@ -55,8 +58,8 @@ agent_trainer:
   # Settings for the world model wrapper used by the SAC agent
   world_model_wrapper:
     model_check_interval_s: 1
-    obs_clip_range: 5.0
-    reward_clip_range: [-1.0, 1.0]
+    obs_clip_range: 100.0
+    reward_clip_range: [0.0, 1.0]
 
 # Configuration for learning/dynamic_train_agent_dreamer.py
 dreamer_agent_trainer:

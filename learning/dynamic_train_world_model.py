@@ -17,6 +17,8 @@ import random
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from utils.tools import seed_everything, save_config_to_shared_folder
+from sklearn.preprocessing import MinMaxScaler
+import joblib
 
 
 def train_model(
@@ -27,6 +29,7 @@ def train_model(
     stop_event=None,
     writer=None,
     global_step=0,
+    model_save_path=None,
 ):
     """
     Train a PyTorch model that maps vectors to vectors.
@@ -84,6 +87,47 @@ def train_model(
             f"[TRAINER] Initialized valid_init_state buffer: {model.valid_init_state.shape[0]} states"
         )
 
+        if trainer_config["use_scalers"]:
+            state_scaler = MinMaxScaler(feature_range=(-3, 3))
+            action_scaler = MinMaxScaler(feature_range=(-3, 3))
+            reward_scaler = MinMaxScaler(feature_range=(-3, 3))
+
+            initial_actions = torch.tensor(
+                dataset[0][:, model.state_size :], dtype=torch.float32
+            )
+            reward_range = [[0.0], [1.0]]
+
+            max_state = np.maximum(
+                np.abs(new_init_states.cpu().numpy().min(axis=0)),
+                np.abs(new_init_states.cpu().numpy().max(axis=0)),
+            )
+            min_state = -max_state
+            max_action = np.maximum(
+                np.abs(initial_actions.cpu().numpy().min(axis=0)),
+                np.abs(initial_actions.cpu().numpy().max(axis=0)),
+            )
+            min_action = -max_action
+
+            state_scaler.fit([min_state, max_state])
+            action_scaler.fit([min_action, max_action])
+            reward_scaler.fit(reward_range)
+
+            model.set_scalers(state_scaler, action_scaler, reward_scaler)
+
+            # save scalers
+            joblib.dump(
+                state_scaler,
+                os.path.join(os.path.dirname(model_save_path), "state_scaler.joblib"),
+            )
+            joblib.dump(
+                action_scaler,
+                os.path.join(os.path.dirname(model_save_path), "action_scaler.joblib"),
+            )
+            joblib.dump(
+                reward_scaler,
+                os.path.join(os.path.dirname(model_save_path), "reward_scaler.joblib"),
+            )
+
     # Unpack dataset
     X, y = dataset
 
@@ -113,7 +157,8 @@ def train_model(
     )
 
     # Define loss function and optimizer
-    criterion = nn.MSELoss()  # Mean Squared Error Loss for regression tasks
+    criterion = nn.L1Loss()
+    reward_criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -126,24 +171,39 @@ def train_model(
     train_losses = []
     val_losses = []
 
-    output_dim = model.output_dim
-
     for epoch in range(num_epochs):
         model.train()  # Set the model to training mode
         epoch_train_loss = 0.0
-        epoch_train_sq_err_per_dim = torch.zeros(output_dim)
+
+        outputs_train = []
+        targets_train = []
 
         for inputs, targets in train_loader:
             optimizer.zero_grad()  # Zero the gradients
-            outputs = model(inputs)  # Forward pass
-            loss = criterion(outputs, targets)  # Compute loss
+            outputs = model(
+                inputs,
+                use_input_state_scaler=trainer_config["use_scalers"],
+                use_input_action_scaler=trainer_config["use_scalers"],
+                use_output_state_scaler=trainer_config["use_scalers"],
+                use_output_reward_scaler=trainer_config["use_scalers"],
+            )  # Forward pass
+            loss = criterion(
+                outputs[:, : model.state_size], targets[:, : model.state_size]
+            )  # Compute loss
+            reward_loss = reward_criterion(
+                outputs[:, model.state_size :], targets[:, model.state_size :]
+            )
+            loss = loss + reward_loss
             loss.backward()  # Backward pass
             optimizer.step()  # Update weights
 
             epoch_train_loss += loss.item() * inputs.size(0)  # Accumulate loss
-            epoch_train_sq_err_per_dim += torch.sum(
-                (outputs.detach() - targets.detach()) ** 2, dim=0
-            )
+
+            outputs_train.append(outputs)
+            targets_train.append(targets)
+
+        outputs_train = torch.cat(outputs_train, dim=0)
+        targets_train = torch.cat(targets_train, dim=0)
 
         # Average training loss for the epoch
         epoch_train_loss /= len(X_train)
@@ -157,8 +217,20 @@ def train_model(
 
         with torch.no_grad():  # No gradient computation during validation
             for inputs, targets in val_loader:
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
+                outputs = model(
+                    inputs,
+                    use_input_state_scaler=trainer_config["use_scalers"],
+                    use_input_action_scaler=trainer_config["use_scalers"],
+                    use_output_state_scaler=trainer_config["use_scalers"],
+                    use_output_reward_scaler=trainer_config["use_scalers"],
+                )
+                loss = criterion(
+                    outputs[:, : model.state_size], targets[:, : model.state_size]
+                )
+                reward_loss = reward_criterion(
+                    outputs[:, model.state_size :], targets[:, model.state_size :]
+                )
+                loss = loss + reward_loss
                 epoch_val_loss += loss.item() * inputs.size(0)
                 all_val_outputs.append(outputs)
                 all_val_targets.append(targets)
@@ -172,31 +244,17 @@ def train_model(
 
         # --- Calculate percentage errors ---
         # --- Training errors (overall and per-dimension) ---
-        train_rmse = np.sqrt(epoch_train_loss)
-        train_err_perc = (
-            train_rmse / (torch.mean(torch.abs(y_train_tensor)) + 1e-8)
-        ) * 100
+        ranges = torch.tensor(np.max(y, axis=0) - np.min(y, axis=0))
 
-        epoch_train_mse_per_dim = epoch_train_sq_err_per_dim / len(X_train)
-        train_rmse_per_dim = torch.sqrt(epoch_train_mse_per_dim)
-        mean_abs_train_per_dim = torch.mean(torch.abs(y_train_tensor), dim=0)
-        train_err_perc_per_dim = (
-            train_rmse_per_dim / (mean_abs_train_per_dim + 1e-8)
-        ) * 100
+        train_mae_per_dim = torch.abs(outputs_train - targets_train).mean(dim=0)
+        train_err_perc_per_dim = (train_mae_per_dim / (ranges + 1e-8)) * 100
 
         # --- Validation errors (overall and per-dimension) ---
         all_val_outputs = torch.cat(all_val_outputs, dim=0)
         all_val_targets = torch.cat(all_val_targets, dim=0)
 
-        val_rmse = np.sqrt(epoch_val_loss)
-        val_err_perc = (
-            val_rmse / (torch.mean(torch.abs(all_val_targets)) + 1e-8)
-        ) * 100
-
-        val_mse_per_dim = torch.mean((all_val_outputs - all_val_targets) ** 2, dim=0)
-        val_rmse_per_dim = torch.sqrt(val_mse_per_dim)
-        mean_abs_val_per_dim = torch.mean(torch.abs(all_val_targets), dim=0)
-        val_err_perc_per_dim = (val_rmse_per_dim / (mean_abs_val_per_dim + 1e-8)) * 100
+        val_mae_per_dim = torch.abs(all_val_outputs - all_val_targets).mean(dim=0)
+        val_err_perc_per_dim = (val_mae_per_dim / (ranges + 1e-8)) * 100
 
         # --- Format error strings for printing ---
         state_size = model.state_size
@@ -207,8 +265,12 @@ def train_model(
             train_dim_error_strs.append(f"St_{i}: {train_err_perc_per_dim[i]:.2f}%")
             val_dim_error_strs.append(f"St_{i}: {val_err_perc_per_dim[i]:.2f}%")
 
-        train_dim_error_strs.append(f"R: {train_err_perc_per_dim[state_size]:.2f}%")
-        val_dim_error_strs.append(f"R: {val_err_perc_per_dim[state_size]:.2f}%")
+        train_dim_error_strs.append(
+            f"R: {train_mae_per_dim[state_size]:.2f} ({train_err_perc_per_dim[state_size]:.2f}%)"
+        )
+        val_dim_error_strs.append(
+            f"R: {val_mae_per_dim[state_size]:.2f} ({val_err_perc_per_dim[state_size]:.2f}%)"
+        )
 
         current_lr = optimizer.param_groups[0]["lr"]
 
@@ -217,8 +279,14 @@ def train_model(
             step = global_step + epoch
             writer.add_scalar("WorldModel/Train_Loss", epoch_train_loss, step)
             writer.add_scalar("WorldModel/Val_Loss", epoch_val_loss, step)
-            writer.add_scalar("WorldModel/Train_Error_Percent", train_err_perc, step)
-            writer.add_scalar("WorldModel/Val_Error_Percent", val_err_perc, step)
+            writer.add_scalar(
+                "WorldModel/Train_Error_Percent",
+                train_err_perc_per_dim.mean(),
+                step,
+            )
+            writer.add_scalar(
+                "WorldModel/Val_Error_Percent", val_err_perc_per_dim.mean(), step
+            )
             writer.add_scalar("WorldModel/Learning_Rate", current_lr, step)
 
             # Log per-dimension errors
@@ -230,17 +298,30 @@ def train_model(
                     f"WorldModel/Val_Error_State_{i}", val_err_perc_per_dim[i], step
                 )
             writer.add_scalar(
-                f"WorldModel/Train_Error_Reward",
+                f"WorldModel/Train_Error_Reward_Percent",
                 train_err_perc_per_dim[state_size],
                 step,
             )
             writer.add_scalar(
-                f"WorldModel/Val_Error_Reward", val_err_perc_per_dim[state_size], step
+                f"WorldModel/Val_Error_Reward_Percent",
+                val_err_perc_per_dim[state_size],
+                step,
+            )
+
+            writer.add_scalar(
+                "WorldModel/Train_Error_Reward_MAE",
+                train_mae_per_dim[state_size],
+                step,
+            )
+            writer.add_scalar(
+                "WorldModel/Val_Error_Reward_MAE",
+                val_mae_per_dim[state_size],
+                step,
             )
 
         if (epoch + 1) % 20 == 0 or epoch == 0 or epoch == num_epochs - 1:
             print(
-                f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.1e} ({train_err_perc:.2f}%), Val Loss: {epoch_val_loss:.1e} ({val_err_perc:.2f}%), LR: {current_lr:.1e}"
+                f"[TRAINER] Epoch [{epoch + 1}/{num_epochs}], Train Loss: {epoch_train_loss:.1e} ({train_err_perc_per_dim.mean():.2f}%), Val Loss: {epoch_val_loss:.1e} ({val_err_perc_per_dim.mean():.2f}%), LR: {current_lr:.1e}"
             )
             print(f"    Train Err (%): " + ", ".join(train_dim_error_strs))
             print(f"    Val Err (%):   " + ", ".join(val_dim_error_strs))
@@ -619,6 +700,7 @@ def main():
                 stop_event=stop_training_event,
                 writer=writer,
                 global_step=global_step,
+                model_save_path=model_save_path,
             )
 
             # Update global step counter

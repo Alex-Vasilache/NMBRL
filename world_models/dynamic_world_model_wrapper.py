@@ -13,6 +13,8 @@ import threading
 import time
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
+from networks.world_model_v1 import load_model
+from networks.world_model_v1 import STATE_SCALER
 
 
 class WorldModelWrapper(DummyVecEnv):
@@ -30,6 +32,15 @@ class WorldModelWrapper(DummyVecEnv):
         model_check_interval_s = wrapper_config["model_check_interval_s"]
         obs_clip_range = wrapper_config["obs_clip_range"]
         reward_clip_range = tuple(wrapper_config["reward_clip_range"])
+        self.use_scalers = self.config["world_model_trainer"]["use_scalers"]
+        self.use_input_state_scaler = self.use_scalers
+        self.use_input_action_scaler = self.use_scalers
+        self.use_output_state_scaler = self.config["world_model_trainer"][
+            "use_output_state_scaler"
+        ]
+        self.use_output_reward_scaler = self.config["world_model_trainer"][
+            "use_output_reward_scaler"
+        ]
 
         # --- Basic Env Setup ---
         self.observation_space = observation_space
@@ -181,15 +192,24 @@ class WorldModelWrapper(DummyVecEnv):
                 #     torch.load(self.model_path, map_location="cpu")
                 # )
                 torch.serialization.add_safe_globals([SimpleModel])
-                new_model = torch.load(
-                    self.model_path, map_location="cpu", weights_only=False
+                new_model = load_model(
+                    self.model_path,
+                    with_scalers=self.use_scalers,
+                    map_location="cpu",
+                    weights_only=False,
                 )
                 new_model.eval()  # Set to evaluation mode
 
                 with torch.no_grad():
                     # --- Test with a dummy input to check for NaNs ---
                     dummy_input = torch.randn(1, self.state_size + self.action_size)
-                    test_output = new_model(dummy_input)
+                    test_output = new_model(
+                        dummy_input,
+                        use_input_state_scaler=self.use_input_state_scaler,
+                        use_input_action_scaler=self.use_input_action_scaler,
+                        use_output_state_scaler=self.use_output_state_scaler,
+                        use_output_reward_scaler=self.use_output_reward_scaler,
+                    )
                     if torch.isnan(test_output).any():
                         print(
                             f"[{datetime.now()}] ERROR: Model at {self.model_path} produced NaNs on a test input. Skipping load."
@@ -231,7 +251,13 @@ class WorldModelWrapper(DummyVecEnv):
                 raise RuntimeError("World model is not loaded, cannot step.")
 
             nn_input = torch.cat([self.state, action_tensor], dim=1)
-            outputs = self.nn_model(nn_input)
+            outputs = self.nn_model(
+                nn_input,
+                use_input_state_scaler=self.use_input_state_scaler,
+                use_input_action_scaler=self.use_input_action_scaler,
+                use_output_state_scaler=self.use_output_state_scaler,
+                use_output_reward_scaler=self.use_output_reward_scaler,
+            )
 
             next_state_tensor = outputs[:, : self.state_size]
             reward_tensor = outputs[:, self.state_size]
@@ -273,6 +299,11 @@ class WorldModelWrapper(DummyVecEnv):
             )
 
             self.state = clamped_next_state
+
+            if (
+                self.use_scalers and not self.use_output_state_scaler
+            ):  # scale original range to [-3, 3]
+                self.state = self.nn_model._do_unscale(self.state, STATE_SCALER)
 
             # --- TensorBoard Logging ---
             current_time = time.time()
@@ -345,11 +376,20 @@ class WorldModelWrapper(DummyVecEnv):
             #     f"[{datetime.now()}] Resetting with valid init state from replay using indices: {random_idxs}"
             # )
 
-            self.state = self.nn_model.valid_init_state[random_idxs]
+            self.state = self.nn_model.valid_init_state[
+                random_idxs
+            ]  # these are states in the original environment range
+
             if remove_from_replay_buffer:
                 self.nn_model.valid_init_state = np.delete(
                     self.nn_model.valid_init_state, random_idxs, axis=0
                 )
+
+            if (
+                self.use_scalers and not self.use_output_state_scaler
+            ):  # scale original range to [-3, 3]
+                self.step_count = 0
+                return self.nn_model._do_scale(self.state, STATE_SCALER).numpy()
         else:
             # Fallback to a random state if the model or its buffer isn't ready
             self.state = (
