@@ -46,7 +46,8 @@ from stable_baselines3.common.monitor import Monitor
 import sys
 import os
 
-ACTION_SCALE = 0.7
+MAX_ACTION_CHANGE = 0.4
+MAX_ACTION_SCALE = 0.7
 
 _high = np.array(
     [
@@ -207,6 +208,8 @@ class PhysicalCartPoleWrapper(gym.Env):
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
 
+        self.previous_action = [0.0]
+
         # Create DMC-style reward task
         # Create a mock physics object for the reward function
         class MockPhysics:
@@ -220,12 +223,6 @@ class PhysicalCartPoleWrapper(gym.Env):
     def step(self, action):
         # Step the underlying environment
 
-        action = np.clip(
-            action,
-            self.env.action_space.low * ACTION_SCALE,
-            self.env.action_space.high * ACTION_SCALE,
-        )
-
         current_position = self.env.state[4]
 
         if current_position > self.env.cartpole_rl.x_limit * 0.7 and action[0] > 0:
@@ -233,10 +230,34 @@ class PhysicalCartPoleWrapper(gym.Env):
         elif current_position < -self.env.cartpole_rl.x_limit * 0.7 and action[0] < 0:
             action = [0.1]
 
-        if current_position > self.env.cartpole_rl.x_limit * 0.85 and action[0] > 0:
+        if current_position > self.env.cartpole_rl.x_limit * 0.8 and action[0] > 0:
             action = [0.2]
-        elif current_position < -self.env.cartpole_rl.x_limit * 0.85 and action[0] < 0:
+        elif current_position < -self.env.cartpole_rl.x_limit * 0.8 and action[0] < 0:
             action = [-0.2]
+
+        if current_position > self.env.cartpole_rl.x_limit * 0.9 and action[0] > 0:
+            action = [0.3]
+        elif current_position < -self.env.cartpole_rl.x_limit * 0.9 and action[0] < 0:
+            action = [-0.3]
+
+        change = np.clip(
+            action - self.previous_action, -MAX_ACTION_CHANGE, MAX_ACTION_CHANGE
+        )
+
+        # Apply change to previous action
+        new_action = self.previous_action + change
+        # Clamp to action space bounds
+        action = np.clip(
+            new_action,
+            self.env.action_space.low * MAX_ACTION_SCALE,
+            self.env.action_space.high * MAX_ACTION_SCALE,
+        )
+        action = action.reshape(1)
+
+        # Ensure correct dtype to match action space
+        action = action.astype(self.action_space.dtype)
+
+        self.previous_action = action.copy()
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 
@@ -264,7 +285,7 @@ class PhysicalCartPoleWrapper(gym.Env):
             self.env.step([0.1])
             current_position = self.env.state[4]
 
-        print(f"Current position: {current_position}")
+        self.prev_action = [0.0]
 
         return self.env.reset(seed=seed, options=options)
 

@@ -3,6 +3,9 @@ import threading
 import numpy as np
 from stable_baselines3.common.callbacks import CallbackList
 
+MAX_ACTION_CHANGE = 0.4
+MAX_ACTION_SCALE = 0.7
+
 
 class RandomPolicy:
     """A simple policy that returns random actions."""
@@ -17,7 +20,7 @@ class RandomPolicy:
             action = self.action_space.sample().reshape(1, -1)
         else:
             # Ensure change doesn't exceed 0.5
-            max_change = 0.4
+            max_change = MAX_ACTION_CHANGE
             # Sample a change within [-0.5, 0.5]
             change = np.random.uniform(
                 -max_change, max_change, size=self.previous_action.shape
@@ -27,8 +30,8 @@ class RandomPolicy:
             # Clamp to action space bounds
             action = np.clip(
                 new_action,
-                self.action_space.low * 0.7,
-                self.action_space.high * 0.7,
+                self.action_space.low * MAX_ACTION_SCALE,
+                self.action_space.high * MAX_ACTION_SCALE,
             )
             action = action.reshape(1, -1)
 
