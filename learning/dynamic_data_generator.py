@@ -75,8 +75,11 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
     base_env = wrapper(
         seed=config["global"]["seed"],
         n_envs=1,
-        render_mode=None,  # Explicitly set to None for headless environments
+        render_mode=(
+            "human" if config["data_generator"]["render_enabled"] else None
+        ),  # Explicitly set to None for headless environments
         max_episode_steps=config["data_generator"]["max_episode_steps"],
+        dt_simulation=config["data_generator"]["dt_simulation"],
     )
 
     # Instantiate the actor wrapper

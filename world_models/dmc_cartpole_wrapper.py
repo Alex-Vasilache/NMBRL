@@ -46,13 +46,17 @@ class DMCWrapper(gym.Env):
         render_mode: Optional[str] = None,
         camera_id=0,
         max_episode_steps=1000,
+        dt_simulation=0.02,
     ):
         self.env = suite.load(
             domain_name,
             task_name,
             visualize_reward=True,
-            task_kwargs={"time_limit": float("inf")},
+            task_kwargs={
+                "time_limit": float("inf"),
+            },
         )
+        self.dt_simulation = dt_simulation
         self.render_mode = render_mode
         self.camera_id = camera_id
         self.max_episode_steps = max_episode_steps
@@ -162,7 +166,9 @@ class DMCWrapper(gym.Env):
 
 
 def make_dmc_env(
-    render_mode: Optional[str] = None, max_episode_steps: int = 1000
+    render_mode: Optional[str] = None,
+    max_episode_steps: int = 1000,
+    dt_simulation: float = 0.02,
 ) -> Callable[[], gym.Env]:
     def _init() -> gym.Env:
         env = DMCWrapper(
@@ -170,6 +176,7 @@ def make_dmc_env(
             "swingup",
             render_mode=render_mode,
             max_episode_steps=max_episode_steps,
+            dt_simulation=dt_simulation,
         )
         env = TimeLimit(env, max_episode_steps=max_episode_steps)
         return Monitor(env)
@@ -184,12 +191,14 @@ class DMCCartpoleWrapper(VecNormalize):
         n_envs: int = 1,
         render_mode: Optional[str] = None,
         max_episode_steps: int = 1000,
+        dt_simulation: float = 0.02,
     ):
         self.n_envs = n_envs
         self._seed = seed
-
+        self.dt_simulation = dt_simulation
         env_fns = [
-            make_dmc_env(render_mode, max_episode_steps) for _ in range(self.n_envs)
+            make_dmc_env(render_mode, max_episode_steps, dt_simulation)
+            for _ in range(self.n_envs)
         ]
 
         if n_envs > 1:
