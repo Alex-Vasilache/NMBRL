@@ -23,6 +23,9 @@ from utils.tools import (
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 from learning.sequence_dataset import create_sequence_dataset_from_buffer
+import matplotlib.pyplot as plt
+import io
+import torchvision
 
 
 def train_rnn_model(
@@ -168,7 +171,7 @@ def train_rnn_model(
         epoch_train_loss = 0.0
         num_batches = 0
 
-        for batch_idx, (initial_states, action_seqs, target_seqs) in enumerate(
+        for batch_idx, (context_states, action_seqs, target_seqs) in enumerate(
             train_loader
         ):
             # Check for stop signal
@@ -178,19 +181,19 @@ def train_rnn_model(
 
             optimizer.zero_grad()
 
-            # Autoregressive forward pass
-            # initial_states: (batch_size, state_size)
-            # action_seqs: (batch_size, seq_len, action_size)
-            # target_seqs: (batch_size, seq_len, state_size + 1)
+            # Context+autoregressive forward pass
+            # context_states: (batch_size, context_length, state_size)
+            # action_seqs: (batch_size, context_length + prediction_length, action_size)
+            # target_seqs: (batch_size, prediction_length, state_size + 1)
             pred_states, pred_rewards = model.predict_sequence(
-                initial_states,
+                context_states,
                 action_seqs,
                 use_input_state_scaler=trainer_config["use_scalers"],
                 use_input_action_scaler=trainer_config["use_scalers"],
                 use_output_state_scaler=trainer_config["use_scalers"],
                 use_output_reward_scaler=trainer_config["use_scalers"],
             )
-            # Concatenate for loss: (batch_size, seq_len, state_size + 1)
+            # Concatenate for loss: (batch_size, prediction_length, state_size + 1)
             outputs = torch.cat([pred_states, pred_rewards], dim=-1)
 
             # Compute loss
@@ -225,27 +228,49 @@ def train_rnn_model(
         model.eval()
         val_loss = 0.0
         num_val_batches = 0
-
+        did_viz = False
         with torch.no_grad():
-            for inputs, targets in val_loader:
-                outputs = model(
-                    inputs,
+            for batch_idx, (context_states, action_seqs, target_seqs) in enumerate(
+                val_loader
+            ):
+                pred_states, pred_rewards = model.predict_sequence(
+                    context_states,
+                    action_seqs,
                     use_input_state_scaler=trainer_config["use_scalers"],
                     use_input_action_scaler=trainer_config["use_scalers"],
                     use_output_state_scaler=trainer_config["use_scalers"],
                     use_output_reward_scaler=trainer_config["use_scalers"],
                 )
-
+                outputs = torch.cat([pred_states, pred_rewards], dim=-1)
                 state_loss = criterion(
-                    outputs[:, :, : model.state_size], targets[:, :, : model.state_size]
+                    outputs[:, :, : model.state_size],
+                    target_seqs[:, :, : model.state_size],
                 )
                 reward_loss = criterion(
-                    outputs[:, :, model.state_size :], targets[:, :, model.state_size :]
+                    outputs[:, :, model.state_size :],
+                    target_seqs[:, :, model.state_size :],
                 )
                 loss = state_loss + reward_loss
-
                 val_loss += loss.item()
                 num_val_batches += 1
+                # Visualization for first batch only
+                if not did_viz:
+                    tb_log_dir = writer.log_dir if writer is not None else "logs"
+                    for i in range(min(2, context_states.shape[0])):
+                        plot_and_save_val_predictions(
+                            epoch,
+                            i,
+                            pred_states[i].cpu().numpy(),
+                            pred_rewards[i].cpu().numpy().squeeze(),
+                            target_seqs[i, :, : model.state_size].cpu().numpy(),
+                            target_seqs[i, :, model.state_size :]
+                            .cpu()
+                            .numpy()
+                            .squeeze(),
+                            tb_log_dir,
+                            writer=writer,
+                        )
+                    did_viz = True
 
         avg_val_loss = val_loss / num_val_batches if num_val_batches > 0 else 0.0
         val_losses.append(avg_val_loss)
@@ -271,6 +296,69 @@ def train_rnn_model(
             )
 
     return train_losses, val_losses
+
+
+def plot_and_save_val_predictions(
+    epoch,
+    sample_idx,
+    pred_states,
+    pred_rewards,
+    target_states,
+    target_rewards,
+    tb_log_dir,
+    writer=None,
+):
+    """
+    Plot and save predicted vs actual state and reward trajectories for a single sample.
+    """
+    import matplotlib.pyplot as plt
+    import io
+
+    try:
+        import torchvision
+
+        has_torchvision = True
+    except ImportError:
+        has_torchvision = False
+    save_dir = os.path.join(tb_log_dir, "val_viz")
+    os.makedirs(save_dir, exist_ok=True)
+    seq_len = pred_states.shape[0]
+    state_dim = pred_states.shape[1]
+    fig, axes = plt.subplots(state_dim + 1, 1, figsize=(8, 2 * (state_dim + 1)))
+    # Ensure axes is always a 1D array
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+    time = np.arange(seq_len)
+    # Plot each state dimension
+    for d in range(state_dim):
+        axes[d].plot(time, target_states[:, d], label="Actual", color="blue")
+        axes[d].plot(
+            time, pred_states[:, d], label="Predicted", color="red", linestyle="--"
+        )
+        axes[d].set_ylabel(f"State {d}")
+        axes[d].legend()
+        axes[d].grid(True, alpha=0.3)
+    # Plot reward
+    axes[-1].plot(time, target_rewards, label="Actual Reward", color="blue")
+    axes[-1].plot(
+        time, pred_rewards, label="Predicted Reward", color="red", linestyle="--"
+    )
+    axes[-1].set_ylabel("Reward")
+    axes[-1].set_xlabel("Time Step")
+    axes[-1].legend()
+    axes[-1].grid(True, alpha=0.3)
+    plt.tight_layout()
+    fname = os.path.join(save_dir, f"epoch_{epoch}_sample_{sample_idx}.png")
+    plt.savefig(fname)
+    plt.close(fig)
+    # Optionally log to TensorBoard
+    if writer is not None and has_torchvision:
+        # Convert plot to image and log
+        image = plt.imread(fname)
+        image_tensor = torch.tensor(image).permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
+        writer.add_images(
+            f"ValViz/Epoch_{epoch}_Sample_{sample_idx}", image_tensor, epoch
+        )
 
 
 def pop_data_from_buffer(buffer_path):

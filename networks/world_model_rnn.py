@@ -167,7 +167,8 @@ class RNNWorldModel(nn.Module):
             states = self._do_unscale(states, STATE_SCALER)
 
         if use_output_reward_scaler and self.reward_scaler:
-            rewards = torch.nn.functional.sigmoid(rewards * 3.6)
+            rewards = (torch.nn.functional.sigmoid(rewards * 3.6) - 0.5) * 2
+            rewards = torch.nn.functional.relu(rewards)
 
         return states, rewards
 
@@ -214,7 +215,7 @@ class RNNWorldModel(nn.Module):
 
     def predict_sequence(
         self,
-        initial_state,
+        context_states,
         actions,
         use_input_state_scaler=False,
         use_input_action_scaler=False,
@@ -222,67 +223,59 @@ class RNNWorldModel(nn.Module):
         use_output_reward_scaler=False,
     ):
         """
-        Predict a sequence of states and rewards given an initial state and sequence of actions.
+        Predict a sequence of states and rewards given context states and a sequence of actions.
 
         Args:
-            initial_state: (batch_size, state_size) initial state
-            actions: (batch_size, seq_len, action_size) sequence of actions
+            context_states: (batch_size, context_length, state_size)
+            actions: (batch_size, context_length + prediction_length, action_size)
             use_*_scaler: boolean flags for scaling
 
         Returns:
-            states: (batch_size, seq_len, state_size) predicted states
-            rewards: (batch_size, seq_len, 1) predicted rewards
+            states: (batch_size, prediction_length, state_size) predicted states
+            rewards: (batch_size, prediction_length, 1) predicted rewards
         """
-        batch_size, seq_len, _ = actions.shape
+        batch_size, context_length, state_size = context_states.shape
+        total_seq_len = actions.shape[1]
+        prediction_length = total_seq_len - context_length
+        device = context_states.device
 
-        # Prepare input sequence
-        # Start with initial state and first action
-        current_state = initial_state.unsqueeze(1)  # (batch_size, 1, state_size)
-        first_action = actions[:, 0:1, :]  # (batch_size, 1, action_size)
-        first_input = torch.cat(
-            [current_state, first_action], dim=-1
-        )  # (batch_size, 1, state_size + action_size)
+        # Teacher forcing for context
+        context_inputs = torch.cat(
+            [context_states, actions[:, :context_length, :]], dim=-1
+        )  # (batch_size, context_length, state_size + action_size)
+        # Pass through model to get hidden state after context
+        context_inputs_proj = self.input_projection(context_inputs)
+        context_inputs_proj = self.dropout(context_inputs_proj)
+        _, h = self.gru(context_inputs_proj)  # h: (num_layers, batch, hidden_dim)
 
-        # Initialize output tensors
+        # Start autoregressive prediction from last context state
+        prev_state = context_states[:, -1, :]  # (batch_size, state_size)
         all_states = []
         all_rewards = []
-
-        # Autoregressive prediction
-        for t in range(seq_len):
-            # Prepare input for this timestep
-            if t == 0:
-                x = first_input
-            else:
-                # Use predicted state from previous timestep
-                prev_state = all_states[-1].unsqueeze(1)  # (batch_size, 1, state_size)
-                current_action = actions[
-                    :, t : t + 1, :
-                ]  # (batch_size, 1, action_size)
-                x = torch.cat(
-                    [prev_state, current_action], dim=-1
-                )  # (batch_size, 1, state_size + action_size)
-
-            # Get prediction
-            with torch.no_grad():
-                output = self.forward(
-                    x,
-                    use_input_state_scaler=use_input_state_scaler,
-                    use_input_action_scaler=use_input_action_scaler,
-                    use_output_state_scaler=use_output_state_scaler,
-                    use_output_reward_scaler=use_output_reward_scaler,
-                )
-
-            # Extract state and reward
-            state = output[:, 0, : self.state_size]  # (batch_size, state_size)
-            reward = output[:, 0, self.state_size :]  # (batch_size, 1)
-
+        for t in range(prediction_length):
+            current_action = actions[
+                :, context_length + t, :
+            ]  # (batch_size, action_size)
+            x = torch.cat([prev_state, current_action], dim=-1).unsqueeze(
+                1
+            )  # (batch_size, 1, state_size + action_size)
+            x = self.input_projection(x)
+            x = self.dropout(x)
+            gru_out, h = self.gru(x, h)  # (batch_size, 1, hidden_dim), h updated
+            gru_out = self.dropout(gru_out)
+            state = self.state_output(gru_out)[:, 0, :]  # (batch_size, state_size)
+            reward = self.reward_output(gru_out)[:, 0, :]  # (batch_size, 1)
+            # Unscale outputs if needed
+            state, reward = self.unscale_output(
+                state, reward, use_output_state_scaler, use_output_reward_scaler
+            )
             all_states.append(state)
             all_rewards.append(reward)
-
-        # Stack all predictions
-        states = torch.stack(all_states, dim=1)  # (batch_size, seq_len, state_size)
-        rewards = torch.stack(all_rewards, dim=1)  # (batch_size, seq_len, 1)
-
+            prev_state = state  # Feed back prediction
+        states = torch.stack(
+            all_states, dim=1
+        )  # (batch_size, prediction_length, state_size)
+        rewards = torch.stack(all_rewards, dim=1)  # (batch_size, prediction_length, 1)
         return states, rewards
 
     def to(self, device):

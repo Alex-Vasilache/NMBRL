@@ -22,6 +22,8 @@ class SequenceDataset(Dataset):
         state_size: int,
         action_size: int,
         imag_horizon: int,
+        context_length: int = 1,
+        prediction_length: Optional[int] = None,
         min_sequence_length: Optional[int] = None,
     ):
         """
@@ -31,12 +33,16 @@ class SequenceDataset(Dataset):
             experience_data: List of (state, action, next_state, reward, done) tuples
             state_size: Size of the state vector
             action_size: Size of the action vector
-            imag_horizon: Length of sequences to create
+            imag_horizon: Length of sequences to create (context + prediction)
+            context_length: Number of context frames given to the model
+            prediction_length: Number of future frames to predict
             min_sequence_length: Minimum length of valid sequences (defaults to imag_horizon)
         """
         self.state_size = state_size
         self.action_size = action_size
         self.imag_horizon = imag_horizon
+        self.context_length = context_length
+        self.prediction_length = prediction_length or (imag_horizon - context_length)
         self.min_sequence_length = min_sequence_length or imag_horizon
 
         # Extract valid start indices for sequences
@@ -48,7 +54,9 @@ class SequenceDataset(Dataset):
         print(
             f"[SEQUENCE_DATASET] Created dataset with {len(self.valid_start_indices)} valid sequences"
         )
-        print(f"[SEQUENCE_DATASET] Sequence length: {imag_horizon}")
+        print(
+            f"[SEQUENCE_DATASET] Sequence length: {imag_horizon} (context: {self.context_length}, prediction: {self.prediction_length})"
+        )
         print(f"[SEQUENCE_DATASET] Total experiences: {len(experience_data)}")
 
     def _find_valid_sequences(self, experience_data: List[Tuple]) -> List[int]:
@@ -98,30 +106,31 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Get a sequence for autoregressive training.
+        Get a sequence for context+autoregressive training.
 
         Returns:
-            initial_state: (state_size,)
-            action_sequence: (imag_horizon, action_size)
-            target_sequence: (imag_horizon, state_size + 1)
+            context_states: (context_length, state_size)
+            action_sequence: (context_length + prediction_length, action_size)
+            target_sequence: (prediction_length, state_size + 1)
         """
         start_idx = self.valid_start_indices[idx]
         sequence_data = self.experience_data[start_idx : start_idx + self.imag_horizon]
 
-        # Initial state is the state at t=0
-        initial_state = sequence_data[0][0]
+        # Context states: first context_length states
+        context_states = [step[0] for step in sequence_data[: self.context_length]]
         # Action sequence: all actions in the sequence
         action_sequence = [step[1] for step in sequence_data]
-        # Target sequence: (next_state, reward) for each step
+        # Target sequence: (next_state, reward) for prediction_length steps after context
         target_sequence = [
-            np.concatenate([step[2], [step[3]]]) for step in sequence_data
+            np.concatenate([step[2], [step[3]]])
+            for step in sequence_data[self.context_length :]
         ]
 
-        initial_state_tensor = torch.tensor(initial_state, dtype=torch.float32)
+        context_states_tensor = torch.tensor(context_states, dtype=torch.float32)
         action_tensor = torch.tensor(action_sequence, dtype=torch.float32)
         target_tensor = torch.tensor(target_sequence, dtype=torch.float32)
 
-        return initial_state_tensor, action_tensor, target_tensor
+        return context_states_tensor, action_tensor, target_tensor
 
     def get_initial_states(self) -> torch.Tensor:
         """
