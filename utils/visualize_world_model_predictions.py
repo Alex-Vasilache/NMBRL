@@ -60,7 +60,7 @@ class WorldModelVisualizer:
         self._display_init_buffer_info()
 
         # Create environments
-        self.real_env, self.pred_env = self._create_environments()
+        self.real_env, self.pred_env, self.pred_env_visual = self._create_environments()
 
         # Initialize data storage
         self.actual_states = []
@@ -181,11 +181,18 @@ class WorldModelVisualizer:
             )
             # Create a wrapper for the world model predictions
             pred_env = self._create_world_model_env()
+            pred_env_visual = DMCWrapper(
+                "cartpole",
+                "swingup",
+                render_mode="human",
+                max_episode_steps=1000,
+                dt_simulation=0.02,
+            )
         else:
             raise ValueError(
                 f"Unsupported environment type: {self.env_type}. Only 'dmc' is supported."
             )
-        return real_env, pred_env
+        return real_env, pred_env, pred_env_visual
 
     def _create_world_model_env(self):
         """Create a wrapper environment that uses the world model for predictions."""
@@ -474,6 +481,15 @@ class WorldModelVisualizer:
 
         return WorldModelEnv(self.world_model, self.config, self.device)
 
+    def _get_state_from_dmc_state(self, state):
+        position = state[0]
+        angle_cos = state[1]
+        angle_sin = state[2]
+        angle = np.arctan2(angle_sin, angle_cos)
+        velocity = state[3]
+        angle_vel = state[4]
+        return np.array([position, angle, velocity, angle_vel])
+
     def run_comparison(
         self,
         num_episodes: int = 3,
@@ -524,6 +540,10 @@ class WorldModelVisualizer:
                     f"  Using warm-up state as starting point: {actual_state[:3]}..."
                 )  # Show first 3 elements
 
+            state = self._get_state_from_dmc_state(actual_state)
+
+            self.pred_env_visual.env.physics.set_state(state)
+
             episode_actual_states = [actual_state.copy()]
             episode_predicted_states = [predicted_state.copy()]
             episode_actual_rewards = []
@@ -541,15 +561,12 @@ class WorldModelVisualizer:
                 # Generate actions using a simple policy
                 actions = []
                 for step in range(rollout_length):
-                    cart_pos = actual_state[0]
-                    cart_vel = actual_state[1]
-                    angle_cos = actual_state[2]
-                    angle_sin = actual_state[3]
-                    angle_vel = actual_state[4]
-
+                    state = self._get_state_from_dmc_state(
+                        actual_state
+                    )  # pos, angle, vel, angle_vel
                     # Simple swing-up policy
                     action = np.array(
-                        [0.5 * np.sin(step * 0.1) - 0.1 * cart_pos - 0.05 * cart_vel]
+                        [0.5 * np.sin(step * 0.1) - 0.1 * state[0] - 0.05 * state[2]]
                     )
                     action = np.clip(action, -1.0, 1.0)
                     actions.append(action)
@@ -601,7 +618,89 @@ class WorldModelVisualizer:
                 # Render frames if requested
                 if save_frames:
                     try:
-                        predicted_frame = self.pred_env.render()
+                        state = self._get_state_from_dmc_state(predicted_state)
+                        self.pred_env_visual.env.physics.set_state(state)
+                        self.pred_env_visual.env.physics.step()
+                        predicted_frame = self.pred_env_visual.env.physics.render(
+                            camera_id=0
+                        )
+                        # Add action visualization to predicted frame
+                        if (
+                            predicted_frame is not None
+                            and len(predicted_frame.shape) == 3
+                        ):
+                            # Convert to BGR for OpenCV
+                            frame_bgr = cv2.cvtColor(predicted_frame, cv2.COLOR_RGB2BGR)
+
+                            # Add action text in yellow
+                            action_text = (
+                                f"Action: {action[0]:.3f}"
+                                if len(action) > 0
+                                else "Action: N/A"
+                            )
+                            cv2.putText(
+                                frame_bgr,
+                                action_text,
+                                (10, 30),  # Position (x, y)
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,  # Font scale
+                                (0, 255, 255),  # Yellow color in BGR
+                                2,  # Thickness
+                                cv2.LINE_AA,
+                            )
+
+                            # Add arrow based on action magnitude and sign
+                            if len(action) > 0:
+                                action_val = action[0]
+                                frame_height, frame_width = frame_bgr.shape[:2]
+
+                                # Arrow parameters
+                                center_x = frame_width // 2
+                                center_y = frame_height - 50
+                                max_arrow_length = 80
+
+                                # Calculate arrow length based on magnitude (clamp to reasonable range)
+                                arrow_length = int(
+                                    min(
+                                        abs(action_val) * max_arrow_length,
+                                        max_arrow_length,
+                                    )
+                                )
+
+                                # Calculate arrow direction based on sign
+                                if action_val > 0:
+                                    # Positive action - arrow points right
+                                    end_x = center_x + arrow_length
+                                    end_y = center_y
+                                elif action_val < 0:
+                                    # Negative action - arrow points left
+                                    end_x = center_x - arrow_length
+                                    end_y = center_y
+                                else:
+                                    # Zero action - small circle
+                                    cv2.circle(
+                                        frame_bgr,
+                                        (center_x, center_y),
+                                        5,
+                                        (0, 255, 255),
+                                        -1,
+                                    )
+                                    end_x = center_x
+                                    end_y = center_y
+
+                                # Draw arrow if action is non-zero
+                                if action_val != 0:
+                                    cv2.arrowedLine(
+                                        frame_bgr,
+                                        (center_x, center_y),
+                                        (end_x, end_y),
+                                        (0, 255, 255),  # Yellow color in BGR
+                                        3,  # Thickness
+                                        tipLength=0.3,
+                                    )
+
+                            # Convert back to RGB
+                            predicted_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                         if predicted_frame is None:
                             print(f"[Warning] Predicted frame at step {step} is None.")
                         episode_frames_predicted.append(predicted_frame)
@@ -682,14 +781,21 @@ class WorldModelVisualizer:
             "Angle Sin",
             "Cart Velocity",
             "Angle Velocity",
+            "Angle",
         ]
 
         for episode_idx in range(
             min(len(self.actual_states), 2)
         ):  # Plot first 2 episodes
             actual_states = self.actual_states[episode_idx]
+            angle = np.arctan2(actual_states[:, 2], actual_states[:, 1]).reshape(-1, 1)
+            actual_states = np.append(actual_states, angle, axis=1)
 
             predicted_states = self.predicted_states[episode_idx]
+            angle = np.arctan2(predicted_states[:, 2], predicted_states[:, 1]).reshape(
+                -1, 1
+            )
+            predicted_states = np.append(predicted_states, angle, axis=1)
 
             for state_idx in range(min(6, actual_states.shape[1])):
                 row = episode_idx
