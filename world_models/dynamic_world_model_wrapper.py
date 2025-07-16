@@ -15,6 +15,7 @@ from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from networks.world_model_v1 import load_model
 from networks.world_model_v1 import STATE_SCALER
+from utils.tools import resolve_device
 
 
 class WorldModelWrapper(DummyVecEnv):
@@ -189,22 +190,27 @@ class WorldModelWrapper(DummyVecEnv):
                 time.sleep(0.5)
 
                 # new_model = self._create_model_instance()
-                # Load onto CPU to avoid potential CUDA initialization issues in the thread
+                # Load onto resolved device based on global configuration
                 # new_model.load_state_dict(
                 #     torch.load(self.model_path, map_location="cpu")
                 # )
                 torch.serialization.add_safe_globals([SimpleModel])
+                device = resolve_device("global", self.config["global"])
                 new_model = load_model(
                     self.model_path,
                     with_scalers=self.use_scalers,
-                    map_location="cpu",
+                    map_location=device,
                     weights_only=False,
                 )
+                # Ensure the model is properly moved to the target device
+                new_model = new_model.to(device)
                 new_model.eval()  # Set to evaluation mode
 
                 with torch.no_grad():
                     # --- Test with a dummy input to check for NaNs ---
-                    dummy_input = torch.randn(1, self.state_size + self.action_size)
+                    dummy_input = torch.randn(
+                        1, self.state_size + self.action_size, device=device
+                    )
                     test_output = new_model(
                         dummy_input,
                         use_input_state_scaler=self.use_input_state_scaler,
@@ -240,8 +246,12 @@ class WorldModelWrapper(DummyVecEnv):
         print("Model watcher thread stopped.")
 
     def step(self, action_np):  # Overrides DummyVecEnv.step
+        device = resolve_device("global", self.config["global"])
         action_tensor = (
-            torch.from_numpy(action_np).float().reshape(self.num_envs, self.action_size)
+            torch.from_numpy(action_np)
+            .float()
+            .reshape(self.num_envs, self.action_size)
+            .to(device)
         )
 
         with torch.no_grad(), self.model_lock:
@@ -252,6 +262,8 @@ class WorldModelWrapper(DummyVecEnv):
                 # This should not happen if __init__ completed successfully.
                 raise RuntimeError("World model is not loaded, cannot step.")
 
+            # Ensure state is on the correct device
+            self.state = self.state.to(device)
             nn_input = torch.cat([self.state, action_tensor], dim=1)
             outputs = self.nn_model(
                 nn_input,
@@ -273,7 +285,7 @@ class WorldModelWrapper(DummyVecEnv):
                 self.terminated = np.ones(self.num_envs, dtype=bool)
                 # print(f"[{datetime.now()}] Terminated after {self.step_count} steps")
                 self.infos = [{"terminal_observation": t} for t in self.state]
-                next_state_tensor = torch.from_numpy(self.reset())
+                next_state_tensor = torch.from_numpy(self.reset()).to(device)
 
             # --- NaN/inf check and clamping ---
             nan_detected = False
@@ -282,7 +294,7 @@ class WorldModelWrapper(DummyVecEnv):
                 or torch.isinf(next_state_tensor).any()
             ):
                 print(
-                    f"[{datetime.now()}] WARNING: NaN/inf detected in predicted next_state. State: {self.state.numpy()}, Action: {action_np}"
+                    f"[{datetime.now()}] WARNING: NaN/inf detected in predicted next_state. State: {self.state.cpu().numpy()}, Action: {action_np}"
                 )
                 # Replace NaNs with zeros or a reset state
                 next_state_tensor = torch.nan_to_num(
@@ -352,8 +364,8 @@ class WorldModelWrapper(DummyVecEnv):
                 self.last_log_time = current_time
 
         return (
-            clamped_next_state.numpy(),
-            clamped_reward.numpy(),
+            clamped_next_state.cpu().numpy(),
+            clamped_reward.cpu().numpy(),
             self.terminated,
             self.infos,
         )
@@ -378,9 +390,16 @@ class WorldModelWrapper(DummyVecEnv):
             #     f"[{datetime.now()}] Resetting with valid init state from replay using indices: {random_idxs}"
             # )
 
+            device = resolve_device("global", self.config["global"])
             self.state = self.nn_model.valid_init_state[
                 random_idxs
             ]  # these are states in the original environment range
+
+            # Ensure state is on the correct device
+            if isinstance(self.state, torch.Tensor):
+                self.state = self.state.to(device)
+            else:
+                self.state = torch.from_numpy(self.state).float().to(device)
 
             if remove_from_replay_buffer:
                 self.nn_model.valid_init_state = np.delete(
@@ -391,18 +410,22 @@ class WorldModelWrapper(DummyVecEnv):
                 self.use_scalers and not self.use_output_state_scaler
             ):  # scale original range to [-3, 3]
                 self.step_count = 0
-                return self.nn_model._do_scale(self.state, STATE_SCALER).numpy()
+                return self.nn_model._do_scale(self.state, STATE_SCALER).cpu().numpy()
         else:
             # Fallback to a random state if the model or its buffer isn't ready
+            device = resolve_device("global", self.config["global"])
             self.state = (
-                torch.from_numpy(self.observation_space.sample()).float().unsqueeze(0)
+                torch.from_numpy(self.observation_space.sample())
+                .float()
+                .unsqueeze(0)
+                .to(device)
             )
             # print(
             #     f"[{datetime.now()}] Resetting with random state from observation space"
             # )
 
         self.step_count = 0
-        return self.state.numpy()
+        return self.state.cpu().numpy()
 
     def set_state(self, state_np: np.ndarray):
         """Sets the internal state of the world model."""
@@ -415,7 +438,8 @@ class WorldModelWrapper(DummyVecEnv):
                 f"Expected state shape {expected_shape}, but got {state_np.shape}"
             )
 
-        self.state = torch.from_numpy(state_np).float()
+        device = resolve_device("global", self.config["global"])
+        self.state = torch.from_numpy(state_np).float().to(device)
 
     def close(self):
         """Cleanly shuts down the model watcher thread."""

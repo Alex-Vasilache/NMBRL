@@ -6,7 +6,7 @@ learning_rate: 3e-5
 eps: 1e-5
 grad_clip: 100.0 # try 1.0
 max_steps_per_episode: 1000
-device: 'cpu'
+device: 'global' # Uses global.device setting
 reward_EMA: True
 seed: 42
 deterministic_run: False

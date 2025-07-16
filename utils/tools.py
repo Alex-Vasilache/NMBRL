@@ -473,10 +473,13 @@ class DiscDist:
         high=20.0,
         transfwd=symlog,
         transbwd=symexp,
-        device="cuda",
+        device=None,
     ):
         self.logits = logits
         self.probs = torch.softmax(logits, -1)
+        # Auto-detect device from logits if not provided
+        if device is None:
+            device = logits.device
         self.buckets = torch.linspace(low, high, steps=255, device=device)
         self.width = (self.buckets[-1] - self.buckets[0]) / 255
         self.transfwd = transfwd
@@ -947,6 +950,68 @@ def tensorstats(tensor, prefix=None):
     if prefix:
         metrics = {f"{prefix}_{k}": v for k, v in metrics.items()}
     return metrics
+
+
+def resolve_device(device_config, global_config=None):
+    """
+    Resolve device configuration to actual device string.
+
+    Args:
+        device_config: Device configuration string ("auto", "cuda", "cpu", "global")
+        global_config: Global configuration dictionary (needed when device_config is "global")
+
+    Returns:
+        str: Resolved device string ("cuda" or "cpu")
+    """
+    if device_config == "global":
+        if global_config is None:
+            raise ValueError("global_config is required when device_config is 'global'")
+        device_config = global_config.get("device", "auto")
+
+    if device_config == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    elif device_config in ["cuda", "cpu"]:
+        return device_config
+    else:
+        raise ValueError(f"Invalid device config: {device_config}")
+
+
+def resolve_all_device_configs(config):
+    """
+    Resolve all device configurations in a config dictionary.
+
+    Args:
+        config: Full configuration dictionary
+
+    Returns:
+        dict: Config with all device settings resolved to actual device strings
+    """
+    # Make a deep copy to avoid modifying the original
+    import copy
+
+    resolved_config = copy.deepcopy(config)
+
+    global_config = resolved_config.get("global", {})
+
+    # Resolve the global device first
+    if "device" in global_config:
+        resolved_config["global"]["device"] = resolve_device(global_config["device"])
+
+    # Resolve device configurations throughout the config
+    def resolve_recursive(obj, global_cfg):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == "device" and isinstance(value, str):
+                    obj[key] = resolve_device(value, global_cfg)
+                elif isinstance(value, (dict, list)):
+                    resolve_recursive(value, global_cfg)
+        elif isinstance(obj, list):
+            for item in obj:
+                resolve_recursive(item, global_cfg)
+
+    resolve_recursive(resolved_config, resolved_config.get("global", {}))
+
+    return resolved_config
 
 
 def seed_everything(seed):

@@ -11,7 +11,11 @@ import time
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
-from utils.tools import seed_everything, save_config_to_shared_folder
+from utils.tools import (
+    seed_everything,
+    save_config_to_shared_folder,
+    resolve_all_device_configs,
+)
 
 
 def write_to_buffer(buffer_path: str, data: Any) -> None:
@@ -239,6 +243,9 @@ if __name__ == "__main__":
     # Load configuration from YAML file
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    # Resolve all device configurations
+    config = resolve_all_device_configs(config)
 
     # seed everything
     seed_everything(config["global"]["seed"])

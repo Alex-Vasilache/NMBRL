@@ -10,7 +10,11 @@ from agents.actor_wrapper import ActorWrapper
 
 # from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from world_models.dynamic_world_model_wrapper import WorldModelWrapper
-from utils.tools import seed_everything, save_config_to_shared_folder
+from utils.tools import (
+    seed_everything,
+    save_config_to_shared_folder,
+    resolve_all_device_configs,
+)
 
 from stable_baselines3.common.callbacks import (
     EvalCallback,
@@ -48,6 +52,9 @@ def main():
     # --- Load configuration from YAML file ---
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    # Resolve all device configurations
+    config = resolve_all_device_configs(config)
 
     global_config = config["global"]
     agent_config = config["agent_trainer"]

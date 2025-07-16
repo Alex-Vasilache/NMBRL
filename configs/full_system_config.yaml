@@ -3,6 +3,7 @@ global:
   seed: 41
   run_folder_prefix: "runs"
   env_type: "dmc" # "dmc" or "physical"
+  device: "auto" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
   
 # TensorBoard logging configuration
 tensorboard:
@@ -72,7 +73,7 @@ dreamer_agent_trainer:
   grad_clip: 100.0 # try 1.0
   reward_EMA: True
   deterministic_run: False
-  device: "cpu"
+  device: "global" # Uses global.device setting
 
   # Behavior
   gamma: 0.997            # Discount factor for the reward

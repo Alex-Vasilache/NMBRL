@@ -16,7 +16,11 @@ import yaml  # Import the YAML library
 import random
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
-from utils.tools import seed_everything, save_config_to_shared_folder
+from utils.tools import (
+    seed_everything,
+    save_config_to_shared_folder,
+    resolve_all_device_configs,
+)
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 
@@ -558,6 +562,9 @@ def main():
     # Load configuration from YAML file
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    # Resolve all device configurations
+    config = resolve_all_device_configs(config)
 
     # seed everything
     seed_everything(config["global"]["seed"])

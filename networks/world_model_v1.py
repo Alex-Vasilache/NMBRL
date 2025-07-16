@@ -10,7 +10,7 @@ STATE_SCALER = "state"
 REWARD_SCALER = "reward"
 
 
-def load_model(model_path, with_scalers=False, map_location="cpu", weights_only=False):
+def load_model(model_path, with_scalers=False, map_location=None, weights_only=False):
     torch.serialization.add_safe_globals([SimpleModel])
     model = torch.load(model_path, map_location=map_location, weights_only=weights_only)
     if with_scalers:
@@ -57,26 +57,51 @@ class SimpleModel(nn.Module):
         self.action_scaler = action_scaler
         self.reward_scaler = reward_scaler
 
+        # Get the device of the model to ensure scaler tensors are on the same device
+        device = (
+            next(self.parameters()).device
+            if list(self.parameters())
+            else torch.device("cpu")
+        )
+
         if self.state_scaler:
             self.state_scaler_min = torch.tensor(
-                self.state_scaler.min_, dtype=torch.float32, requires_grad=False
+                self.state_scaler.min_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
             self.state_scaler_scale = torch.tensor(
-                self.state_scaler.scale_, dtype=torch.float32, requires_grad=False
+                self.state_scaler.scale_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
         if self.action_scaler:
             self.action_scaler_min = torch.tensor(
-                self.action_scaler.min_, dtype=torch.float32, requires_grad=False
+                self.action_scaler.min_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
             self.action_scaler_scale = torch.tensor(
-                self.action_scaler.scale_, dtype=torch.float32, requires_grad=False
+                self.action_scaler.scale_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
         if self.reward_scaler:
             self.reward_scaler_min = torch.tensor(
-                self.reward_scaler.min_, dtype=torch.float32, requires_grad=False
+                self.reward_scaler.min_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
             self.reward_scaler_scale = torch.tensor(
-                self.reward_scaler.scale_, dtype=torch.float32, requires_grad=False
+                self.reward_scaler.scale_,
+                dtype=torch.float32,
+                requires_grad=False,
+                device=device,
             )
 
     def _do_scale(self, x, scaler=str):
@@ -161,3 +186,18 @@ class SimpleModel(nn.Module):
         # ).unsqueeze(1)
 
         return x
+
+    def to(self, device):
+        """Override to ensure scaler tensors are also moved to the device."""
+        super().to(device)
+        # Move scaler tensors to the same device
+        if hasattr(self, "state_scaler_min"):
+            self.state_scaler_min = self.state_scaler_min.to(device)
+            self.state_scaler_scale = self.state_scaler_scale.to(device)
+        if hasattr(self, "action_scaler_min"):
+            self.action_scaler_min = self.action_scaler_min.to(device)
+            self.action_scaler_scale = self.action_scaler_scale.to(device)
+        if hasattr(self, "reward_scaler_min"):
+            self.reward_scaler_min = self.reward_scaler_min.to(device)
+            self.reward_scaler_scale = self.reward_scaler_scale.to(device)
+        return self
