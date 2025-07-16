@@ -23,11 +23,6 @@ sys.path.append(str(project_root))
 
 from networks.world_model_v1 import load_model, SimpleModel
 from networks.world_model_rnn import load_model as load_rnn_model, RNNWorldModel
-from world_models.dmc_cartpole_wrapper import (
-    DMCWrapper,
-    make_dmc_env,
-    DMCCartpoleWrapper,
-)
 from utils.tools import resolve_device
 
 
@@ -157,24 +152,39 @@ class WorldModelVisualizer:
 
     def _create_environments(self) -> Tuple:
         """Create real and predicted environments."""
+        import platform
+
         if self.env_type == "dmc":
-            # Create DMC environment for real simulation
+            try:
+                from world_models.dmc_cartpole_wrapper import (
+                    DMCWrapper,
+                    make_dmc_env,
+                    DMCCartpoleWrapper,
+                )
+            except ImportError as e:
+                print(
+                    "[ERROR] Failed to import dm_control or dmc_cartpole_wrapper. Mujoco rendering will not work."
+                )
+                print("        Error details:", e)
+                print(
+                    "        If you do not need Mujoco rendering, you can ignore this. Otherwise, check your installation."
+                )
+                raise RuntimeError("dm_control import failed: " + str(e))
+            # On Windows, do not set MUJOCO_GL=egl. Use 'rgb_array' render mode for frame capture.
+            render_mode = "rgb_array"
             real_env = DMCWrapper(
                 "cartpole",
                 "swingup",
-                render_mode="rgb_array",
+                render_mode=render_mode,
                 max_episode_steps=1000,
                 dt_simulation=0.02,
             )
-
             # Create a wrapper for the world model predictions
             pred_env = self._create_world_model_env()
-
         else:
             raise ValueError(
                 f"Unsupported environment type: {self.env_type}. Only 'dmc' is supported."
             )
-
         return real_env, pred_env
 
     def _create_world_model_env(self):
@@ -188,6 +198,7 @@ class WorldModelVisualizer:
                 self.state = None
                 self.step_count = 0
                 self.max_episode_steps = 1000
+                self.last_action = None  # Store last action for visualization
 
                 # Get environment dimensions from world model
                 self.state_size = world_model.state_size
@@ -246,6 +257,8 @@ class WorldModelVisualizer:
                 """Take a step using the world model."""
                 if self.state is None:
                     raise RuntimeError("Environment not reset")
+                # Store the last action for visualization
+                self.last_action = action
 
                 # Convert action to tensor
                 action_tensor = torch.tensor(
@@ -310,7 +323,6 @@ class WorldModelVisualizer:
                 """Render the current state using a custom renderer for DMC states."""
                 try:
                     # Create a simple visualization of the predicted state
-                    # This is a basic implementation - you might want to enhance it
                     frame = np.zeros((400, 600, 3), dtype=np.uint8)
                     frame.fill(255)  # White background
 
@@ -326,9 +338,9 @@ class WorldModelVisualizer:
                         if len(state) >= 5:
                             # Assume first element is position, 3rd and 4th are sin/cos of angle
                             cart_pos = state[0] if len(state) > 0 else 0
-                            angle_sin = state[2] if len(state) > 2 else 0
-                            angle_cos = state[3] if len(state) > 3 else 1
-                            angle = np.arctan2(angle_sin, angle_cos)
+                            angle_cos = state[2] if len(state) > 2 else 1
+                            angle_sin = state[3] if len(state) > 3 else 0
+                            angle = state[4] if len(state) > 4 else 0
                         else:
                             # Fallback for different state structures
                             cart_pos = 0
@@ -336,7 +348,7 @@ class WorldModelVisualizer:
 
                         # Draw cart and pole (simplified visualization)
                         # Scale to image coordinates
-                        scale = 100
+                        scale = 300
                         center_x = 300 + int(cart_pos * scale)
                         center_y = 200
 
@@ -350,8 +362,8 @@ class WorldModelVisualizer:
                             -1,
                         )
 
-                        # Draw pole (line)
-                        pole_length = 80
+                        # Draw pole (line) - flip the angle to match actual environment
+                        pole_length = 100
                         pole_end_x = center_x + int(pole_length * np.sin(angle))
                         pole_end_y = center_y - int(pole_length * np.cos(angle))
                         cv2.line(
@@ -370,6 +382,46 @@ class WorldModelVisualizer:
                             (0, 0, 0),
                             2,
                         )
+
+                        # Draw action arrow below the cart
+                        if self.last_action is not None:
+                            # Assume action is a 1D array or scalar
+                            action_val = (
+                                float(self.last_action[0])
+                                if hasattr(self.last_action, "__len__")
+                                and len(self.last_action) > 0
+                                else float(self.last_action)
+                            )
+                            arrow_length = int(
+                                40 + 60 * abs(action_val)
+                            )  # min 40, max 100 px
+                            arrow_color = (0, 0, 255)  # Red arrow
+                            arrow_thickness = 4
+                            base_y = center_y + cart_height // 2 + 20
+                            base_x = center_x
+                            if action_val >= 0:
+                                tip_x = base_x + arrow_length
+                            else:
+                                tip_x = base_x - arrow_length
+                            tip_y = base_y
+                            cv2.arrowedLine(
+                                frame,
+                                (base_x, base_y),
+                                (tip_x, tip_y),
+                                arrow_color,
+                                arrow_thickness,
+                                tipLength=0.3,
+                            )
+                            # Optionally, add text for action value
+                            cv2.putText(
+                                frame,
+                                f"Action: {action_val:.2f}",
+                                (base_x - 50, base_y + 30),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 0, 255),
+                                2,
+                            )
 
                         # Add text to indicate this is a prediction
                         cv2.putText(
@@ -497,9 +549,22 @@ class WorldModelVisualizer:
             actual_rollout_rewards = []
 
             for step, action in enumerate(actions):
+
                 actual_state, actual_reward, done, _, info = self.real_env.step(action)
                 actual_rollout_states.append(actual_state.copy())
                 actual_rollout_rewards.append(actual_reward)
+
+                if save_frames:
+                    try:
+                        actual_frame = self.real_env.render().copy()
+                        if actual_frame is None:
+                            print(f"[Warning] Actual frame at step {step} is None.")
+                        episode_frames_actual.append(actual_frame)
+                    except Exception as e:
+                        print(
+                            f"[Error] Exception during actual frame render at step {step}: {e}"
+                        )
+                        episode_frames_actual.append(None)
 
                 if done:
                     break
@@ -515,11 +580,25 @@ class WorldModelVisualizer:
             ).unsqueeze(0)
 
             for step, action in enumerate(actions):
+
                 predicted_state, predicted_reward, pred_done, pred_info = (
                     self.pred_env.step(action)
                 )
                 predicted_rollout_states.append(predicted_state.copy())
                 predicted_rollout_rewards.append(predicted_reward)
+
+                # Render frames if requested
+                if save_frames:
+                    try:
+                        predicted_frame = self.pred_env.render()
+                        if predicted_frame is None:
+                            print(f"[Warning] Predicted frame at step {step} is None.")
+                        episode_frames_predicted.append(predicted_frame)
+                    except Exception as e:
+                        print(
+                            f"[Error] Exception during predicted frame render at step {step}: {e}"
+                        )
+                        episode_frames_predicted.append(None)
 
                 if pred_done:
                     break
@@ -532,31 +611,6 @@ class WorldModelVisualizer:
             episode_actual_rewards.extend(actual_rollout_rewards)
             episode_predicted_rewards.extend(predicted_rollout_rewards)
             episode_actions.extend(actions)
-
-            # Render frames if requested
-            if save_frames:
-                for step in range(len(actual_rollout_states)):
-                    try:
-                        actual_frame = self.real_env.render()
-                        if actual_frame is None:
-                            print(f"[Warning] Actual frame at step {step} is None.")
-                        episode_frames_actual.append(actual_frame)
-                    except Exception as e:
-                        print(
-                            f"[Error] Exception during actual frame render at step {step}: {e}"
-                        )
-                        episode_frames_actual.append(None)
-
-                    try:
-                        predicted_frame = self.pred_env.render()
-                        if predicted_frame is None:
-                            print(f"[Warning] Predicted frame at step {step} is None.")
-                        episode_frames_predicted.append(predicted_frame)
-                    except Exception as e:
-                        print(
-                            f"[Error] Exception during predicted frame render at step {step}: {e}"
-                        )
-                        episode_frames_predicted.append(None)
 
             # Store episode data
             self.actual_states.append(np.array(episode_actual_states))
@@ -617,14 +671,18 @@ class WorldModelVisualizer:
             "Angle Cos",
             "Angle Sin",
             "Angle",
-            "Angle Velocity",
         ]
 
         for episode_idx in range(
             min(len(self.actual_states), 2)
         ):  # Plot first 2 episodes
-            actual_states = self.actual_states[episode_idx]
-            predicted_states = self.predicted_states[episode_idx]
+            actual_states = self.actual_states[
+                episode_idx
+            ]  # position, velocity, angle cos, angle sin, angle
+
+            predicted_states = self.predicted_states[
+                episode_idx
+            ]  # position, velocity, angle cos, angle sin, angle
 
             for state_idx in range(min(6, actual_states.shape[1])):
                 row = episode_idx

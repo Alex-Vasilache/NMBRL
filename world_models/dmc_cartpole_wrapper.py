@@ -4,19 +4,7 @@ import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
 from gymnasium import spaces
 from typing import Optional, Dict, Any, Callable
-
-# Try to set EGL for headless rendering before importing dm_control
-if "MUJOCO_GL" not in os.environ:
-    os.environ["MUJOCO_GL"] = "egl"
-    print("[INFO] Set MUJOCO_GL=egl for headless Mujoco rendering.")
-
-try:
-    from dm_control import suite
-except Exception as e:
-    print(
-        "[WARNING] Could not import dm_control with EGL. Mujoco rendering may fail in headless environments."
-    )
-    raise e
+from dm_control import suite
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
