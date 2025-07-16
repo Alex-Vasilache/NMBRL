@@ -153,7 +153,7 @@ def train_rnn_model(
     )
 
     # Define loss function and optimizer
-    criterion = nn.L1Loss()
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

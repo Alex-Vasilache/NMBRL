@@ -167,8 +167,7 @@ class RNNWorldModel(nn.Module):
             states = self._do_unscale(states, STATE_SCALER)
 
         if use_output_reward_scaler and self.reward_scaler:
-            rewards = (torch.nn.functional.sigmoid(rewards * 3.6) - 0.5) * 2
-            rewards = torch.nn.functional.relu(rewards)
+            rewards = self._do_unscale(rewards, REWARD_SCALER)
 
         return states, rewards
 

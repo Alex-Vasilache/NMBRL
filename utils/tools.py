@@ -424,16 +424,16 @@ class SampleDist:
         return getattr(self._dist, name)
 
     def mean(self):
-        samples = self._dist.sample(self._samples)
+        samples = self._dist.sample((self._samples,))
         return torch.mean(samples, 0)
 
     def mode(self):
-        sample = self._dist.sample(self._samples)
+        sample = self._dist.sample((self._samples,))
         logprob = self._dist.log_prob(sample)
         return sample[torch.argmax(logprob)][0]
 
     def entropy(self):
-        sample = self._dist.sample(self._samples)
+        sample = self._dist.sample((self._samples,))
         logprob = self.log_prob(sample)
         return -torch.mean(logprob, 0)
 
@@ -683,8 +683,25 @@ class TanhBijector(torchd.Transform):
         return y
 
     def _forward_log_det_jacobian(self, x):
+        import torch.nn.functional as F
+
         log2 = torch.math.log(2.0)
-        return 2.0 * (log2 - x - torch.softplus(-2.0 * x))
+        return 2.0 * (log2 - x - F.softplus(-2.0 * x))
+
+    def log_abs_det_jacobian(self, x, y):
+        # PyTorch expects this signature for Transforms
+        return self._forward_log_det_jacobian(x)
+
+    @property
+    def domain(self):
+        return torchd.constraints.real
+
+    @property
+    def codomain(self):
+        return torchd.constraints.interval(-1.0, 1.0)
+
+    def __call__(self, x):
+        return self._forward(x)
 
 
 def static_scan_for_lambda_return(fn, inputs, start):
