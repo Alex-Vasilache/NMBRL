@@ -330,25 +330,36 @@ class WorldModelVisualizer:
                         state = self.state.cpu().numpy().flatten()
 
                         # For DMC cartpole, the state structure is typically:
-                        # [position, velocity, sin(angle), cos(angle), angular_velocity]
+                        # [position, cos(angle), sin(angle), velocity, angular_velocity]
                         # But we need to handle the flattened structure from DMC
 
                         # Try to extract cart position and angle from the flattened state
                         # This is a simplified approach - you might need to adjust based on your specific DMC setup
                         if len(state) >= 5:
-                            # Assume first element is position, 3rd and 4th are sin/cos of angle
+                            # Assume first element is position, 2nd and 3rd are sin/cos of angle
                             cart_pos = state[0] if len(state) > 0 else 0
-                            angle_cos = state[2] if len(state) > 2 else 1
-                            angle_sin = state[3] if len(state) > 3 else 0
-                            angle = state[4] if len(state) > 4 else 0
+                            angle_cos = state[1] if len(state) > 1 else 1
+                            angle_sin = state[2] if len(state) > 2 else 0
+                            angle = np.arctan2(angle_sin, angle_cos)
+                            cart_vel = state[3] if len(state) > 3 else 0
+                            angle_vel = state[4] if len(state) > 4 else 0
                         else:
                             # Fallback for different state structures
                             cart_pos = 0
                             angle = 0
 
+                        # self.real_env.physics.set_state(  # position, angle, vel, angle_vel
+                        #     [cart_pos, angle, cart_vel, angle_vel]
+                        # )
+                        # self.real_env.physics.step()
+                        # real_frame = self.real_env.render()
+
+                        # cv2.imshow("Real Environment", real_frame)
+                        # cv2.waitKey(1)
+
                         # Draw cart and pole (simplified visualization)
                         # Scale to image coordinates
-                        scale = 300
+                        scale = 150
                         center_x = 300 + int(cart_pos * scale)
                         center_y = 200
 
@@ -363,7 +374,7 @@ class WorldModelVisualizer:
                         )
 
                         # Draw pole (line) - flip the angle to match actual environment
-                        pole_length = 100
+                        pole_length = 150
                         pole_end_x = center_x + int(pole_length * np.sin(angle))
                         pole_end_y = center_y - int(pole_length * np.cos(angle))
                         cv2.line(
@@ -667,22 +678,18 @@ class WorldModelVisualizer:
 
         state_names = [
             "Cart Position",
-            "Cart Velocity",
             "Angle Cos",
             "Angle Sin",
-            "Angle",
+            "Cart Velocity",
+            "Angle Velocity",
         ]
 
         for episode_idx in range(
             min(len(self.actual_states), 2)
         ):  # Plot first 2 episodes
-            actual_states = self.actual_states[
-                episode_idx
-            ]  # position, velocity, angle cos, angle sin, angle
+            actual_states = self.actual_states[episode_idx]
 
-            predicted_states = self.predicted_states[
-                episode_idx
-            ]  # position, velocity, angle cos, angle sin, angle
+            predicted_states = self.predicted_states[episode_idx]
 
             for state_idx in range(min(6, actual_states.shape[1])):
                 row = episode_idx
@@ -762,10 +769,9 @@ class WorldModelVisualizer:
 
         state_names = [
             "Cart Position",
-            "Cart Velocity",
             "Angle Cos",
             "Angle Sin",
-            "Angle",
+            "Cart Velocity",
             "Angle Velocity",
         ]
 
@@ -1067,10 +1073,9 @@ class WorldModelVisualizer:
         print("\nState Prediction Statistics:")
         state_names = [
             "Cart Position",
-            "Cart Velocity",
             "Angle Cos",
             "Angle Sin",
-            "Angle",
+            "Cart Velocity",
             "Angle Velocity",
         ]
         for i, name in enumerate(state_names):

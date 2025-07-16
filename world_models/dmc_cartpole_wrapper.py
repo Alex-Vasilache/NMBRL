@@ -119,6 +119,7 @@ class DMCWrapper(gym.Env):
                 cv2.imshow(self._window_name, frame_bgr)
                 cv2.waitKey(1)
                 return frame  # Return the RGB frame for saving
+
             else:
                 frame = self.env.physics.render(
                     height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id

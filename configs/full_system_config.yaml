@@ -18,11 +18,11 @@ run_system:
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
-  max_episode_steps: 1000
+  max_episode_steps: 100000
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
-  render_enabled: false  # Set to false for headless environments, true for local development
+  render_enabled: true  # Set to false for headless environments, true for local development
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
@@ -31,12 +31,12 @@ world_model_trainer:
   new_data_threshold: 1000
   watcher_interval_seconds: 1
   # Model architecture
-  hidden_dim: 1024
+  hidden_dim: 256
   # Training parameters
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.00003
+  learning_rate: 0.00004
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -55,7 +55,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 1024
+  n_envs: 32
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -73,7 +73,7 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 1024
+  batch_size: 32
   learning_rate: 4e-5
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
@@ -89,7 +89,7 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 512               # Number of neurons in each layer # todo 32-64
+  units: 256               # Number of neurons in each layer # todo 32-64
 
   # Logging
   save_frequency: 100  # Save models every N episodes (None to disable)
