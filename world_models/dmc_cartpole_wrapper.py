@@ -1,9 +1,22 @@
-from typing import Optional, Dict, Any, Callable
+import os
 import numpy as np
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
 from gymnasium import spaces
-from dm_control import suite
+from typing import Optional, Dict, Any, Callable
+
+# Try to set EGL for headless rendering before importing dm_control
+if "MUJOCO_GL" not in os.environ:
+    os.environ["MUJOCO_GL"] = "egl"
+    print("[INFO] Set MUJOCO_GL=egl for headless Mujoco rendering.")
+
+try:
+    from dm_control import suite
+except Exception as e:
+    print(
+        "[WARNING] Could not import dm_control with EGL. Mujoco rendering may fail in headless environments."
+    )
+    raise e
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
@@ -100,59 +113,33 @@ class DMCWrapper(gym.Env):
         return obs, info
 
     def render(self):
-        if self.render_mode == "human":
-            try:
+        try:
+            if self.render_mode == "human":
                 import cv2
 
-                # Initialize the window if not already done
                 if not hasattr(self, "_window_initialized"):
                     self._window_name = "DMC Cartpole"
                     cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
                     cv2.resizeWindow(self._window_name, WINDOW_WIDTH, WINDOW_HEIGHT)
                     self._window_initialized = True
-
-                # Get the frame from dm_control
                 frame = self.env.physics.render(
                     width=WINDOW_WIDTH,
                     height=WINDOW_HEIGHT,
                     camera_id=self.camera_id,
                 )
-
-                # OpenCV expects BGR, dm_control renders in RGB
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-                # Show the image
                 cv2.imshow(self._window_name, frame_bgr)
-                cv2.waitKey(1)  # Necessary to process GUI events
-
-                return None
-            except ImportError:
-                print("OpenCV not available, falling back to rgb_array mode")
-                return self.env.physics.render(
+                cv2.waitKey(1)
+                return frame  # Return the RGB frame for saving
+            else:
+                frame = self.env.physics.render(
                     height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
                 )
-            except Exception as e:
-                print(f"Error in human rendering: {e}, falling back to rgb_array mode")
-                return self.env.physics.render(
-                    height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
-                )
-        else:
-            try:
-                return self.env.physics.render(
-                    height=WINDOW_HEIGHT, width=WINDOW_WIDTH, camera_id=self.camera_id
-                )
-            except Exception as e:
-                # In headless environments, rendering might fail completely
-                if (
-                    "DISPLAY" in str(e)
-                    or "X11" in str(e)
-                    or "GLFW" in str(e)
-                    or "gladLoadGL" in str(e)
-                ):
-                    print(f"Warning: Rendering failed in headless environment: {e}")
-                    return None
-                else:
-                    raise e
+                return frame
+        except Exception as e:
+            print(f"Warning: Rendering failed: {e}. Returning blank frame.")
+            # Return a blank white image if rendering fails
+            return 255 * np.ones((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=np.uint8)
 
     def close(self):
         try:

@@ -537,17 +537,25 @@ class WorldModelVisualizer:
             if save_frames:
                 for step in range(len(actual_rollout_states)):
                     try:
-                        # Render the actual frame (real environment doesn't have settable state)
                         actual_frame = self.real_env.render()
+                        if actual_frame is None:
+                            print(f"[Warning] Actual frame at step {step} is None.")
                         episode_frames_actual.append(actual_frame)
-                    except:
+                    except Exception as e:
+                        print(
+                            f"[Error] Exception during actual frame render at step {step}: {e}"
+                        )
                         episode_frames_actual.append(None)
 
                     try:
-                        # Render predicted frame using the world model environment
                         predicted_frame = self.pred_env.render()
+                        if predicted_frame is None:
+                            print(f"[Warning] Predicted frame at step {step} is None.")
                         episode_frames_predicted.append(predicted_frame)
-                    except:
+                    except Exception as e:
+                        print(
+                            f"[Error] Exception during predicted frame render at step {step}: {e}"
+                        )
                         episode_frames_predicted.append(None)
 
             # Store episode data
@@ -812,8 +820,12 @@ class WorldModelVisualizer:
 
     def _save_frames(self, save_dir: str):
         """Save rendered frames if available."""
+        import cv2
+
         frames_dir = os.path.join(save_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
+
+        TARGET_HEIGHT, TARGET_WIDTH = 270, 360  # Match DMCWrapper real env
 
         for episode_idx, (actual_frames, predicted_frames) in enumerate(
             zip(self.frames_actual, self.frames_predicted)
@@ -826,24 +838,98 @@ class WorldModelVisualizer:
             os.makedirs(actual_dir, exist_ok=True)
             os.makedirs(predicted_dir, exist_ok=True)
 
+            actual_row = []
+            predicted_row = []
+
             for step_idx, (actual_frame, predicted_frame) in enumerate(
                 zip(actual_frames, predicted_frames)
             ):
+                # Save actual frame
                 if actual_frame is not None:
-                    import cv2
-
-                    cv2.imwrite(
-                        os.path.join(actual_dir, f"step_{step_idx:03d}.png"),
-                        cv2.cvtColor(actual_frame, cv2.COLOR_RGB2BGR),
+                    print(
+                        f"[DEBUG] Actual frame at step {step_idx}: type={type(actual_frame)}, shape={getattr(actual_frame, 'shape', None)}, dtype={getattr(actual_frame, 'dtype', None)}"
+                    )
+                    try:
+                        if actual_frame.shape[:2] != (TARGET_HEIGHT, TARGET_WIDTH):
+                            actual_frame = cv2.resize(
+                                actual_frame, (TARGET_WIDTH, TARGET_HEIGHT)
+                            )
+                        out_path = os.path.join(actual_dir, f"step_{step_idx:03d}.png")
+                        result = cv2.imwrite(
+                            out_path, cv2.cvtColor(actual_frame, cv2.COLOR_RGB2BGR)
+                        )
+                        print(
+                            f"[DEBUG] cv2.imwrite(actual) returned {result} for {out_path}"
+                        )
+                        if not result:
+                            print(f"[ERROR] Failed to save actual frame at {out_path}")
+                        actual_row.append(actual_frame)
+                    except Exception as e:
+                        print(
+                            f"[ERROR] Exception saving actual frame at step {step_idx}: {e}"
+                        )
+                        actual_row.append(
+                            np.full(
+                                (TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8
+                            )
+                        )
+                else:
+                    actual_row.append(
+                        np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8)
                     )
 
+                # Save predicted frame
                 if predicted_frame is not None:
-                    import cv2
-
-                    cv2.imwrite(
-                        os.path.join(predicted_dir, f"step_{step_idx:03d}.png"),
-                        cv2.cvtColor(predicted_frame, cv2.COLOR_RGB2BGR),
+                    print(
+                        f"[DEBUG] Predicted frame at step {step_idx}: type={type(predicted_frame)}, shape={getattr(predicted_frame, 'shape', None)}, dtype={getattr(predicted_frame, 'dtype', None)}"
                     )
+                    try:
+                        if predicted_frame.shape[:2] != (TARGET_HEIGHT, TARGET_WIDTH):
+                            predicted_frame = cv2.resize(
+                                predicted_frame, (TARGET_WIDTH, TARGET_HEIGHT)
+                            )
+                        out_path = os.path.join(
+                            predicted_dir, f"step_{step_idx:03d}.png"
+                        )
+                        result = cv2.imwrite(
+                            out_path, cv2.cvtColor(predicted_frame, cv2.COLOR_RGB2BGR)
+                        )
+                        print(
+                            f"[DEBUG] cv2.imwrite(predicted) returned {result} for {out_path}"
+                        )
+                        if not result:
+                            print(
+                                f"[ERROR] Failed to save predicted frame at {out_path}"
+                            )
+                        predicted_row.append(predicted_frame)
+                    except Exception as e:
+                        print(
+                            f"[ERROR] Exception saving predicted frame at step {step_idx}: {e}"
+                        )
+                        predicted_row.append(
+                            np.full(
+                                (TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8
+                            )
+                        )
+                else:
+                    predicted_row.append(
+                        np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8)
+                    )
+
+            # Combine all actual and predicted frames into a single image
+            if actual_row and predicted_row:
+                combined_actual = np.concatenate(actual_row, axis=1)
+                combined_predicted = np.concatenate(predicted_row, axis=1)
+                combined_image = np.concatenate(
+                    [combined_actual, combined_predicted], axis=0
+                )
+                combined_path = os.path.join(
+                    episode_dir, f"combined_episode_{episode_idx + 1}.png"
+                )
+                result = cv2.imwrite(
+                    combined_path, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR)
+                )
+                print(f"[DEBUG] Combined image saved: {combined_path}, result={result}")
 
         print(f"Frames saved to: {frames_dir}")
 

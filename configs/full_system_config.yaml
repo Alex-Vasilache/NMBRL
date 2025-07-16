@@ -3,7 +3,7 @@ global:
   seed: 41
   run_folder_prefix: "runs"
   env_type: "dmc" # "dmc" or "physical"
-  device: "auto" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
+  device: "cpu" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
   
 # TensorBoard logging configuration
 tensorboard:
@@ -22,7 +22,7 @@ data_generator:
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
-  render_enabled: true  # Set to false for headless environments, true for local development
+  render_enabled: false  # Set to false for headless environments, true for local development
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
@@ -48,14 +48,14 @@ world_model_trainer:
   model_type: "rnn" # "mlp" or "rnn"
   num_layers: 3
   dropout: 0.2
-  context_length: 5   # Number of context frames given to the model
-  prediction_length: 45 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
+  context_length: 1   # Number of context frames given to the model
+  prediction_length: 15 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER"
   # Environment settings
-  n_envs: 32
+  n_envs: 1024
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -73,8 +73,8 @@ agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 32
-  learning_rate: 3e-5
+  batch_size: 1024
+  learning_rate: 4e-5
   eps: 1e-5
   grad_clip: 100.0 # try 1.0
   reward_EMA: True
@@ -89,7 +89,7 @@ dreamer_agent_trainer:
   # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 128               # Number of neurons in each layer # todo 32-64
+  units: 512               # Number of neurons in each layer # todo 32-64
 
   # Logging
   save_frequency: 100  # Save models every N episodes (None to disable)
