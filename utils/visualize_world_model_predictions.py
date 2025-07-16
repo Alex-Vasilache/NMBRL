@@ -22,6 +22,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from networks.world_model_v1 import load_model, SimpleModel
+from networks.world_model_rnn import load_model as load_rnn_model, RNNWorldModel
 from world_models.dmc_cartpole_wrapper import (
     DMCWrapper,
     make_dmc_env,
@@ -57,6 +58,9 @@ class WorldModelVisualizer:
         # Load world model
         self.world_model = self._load_world_model()
 
+        # Display model type information
+        self._display_model_info()
+
         # Display information about the valid init buffer
         self._display_init_buffer_info()
 
@@ -72,13 +76,33 @@ class WorldModelVisualizer:
         self.frames_actual = []
         self.frames_predicted = []
 
-    def _load_world_model(self) -> SimpleModel:
-        """Load the trained world model."""
+    def _load_world_model(self):
+        """Load the trained world model (MLP or RNN)."""
         print(f"Loading world model from: {self.model_path}")
 
-        # Load model with scalers
-        model = load_model(self.model_path, with_scalers=True, map_location=self.device)
-        model.eval()
+        # Try to load as RNN model first
+        try:
+            model = load_rnn_model(
+                self.model_path, with_scalers=False, map_location=self.device
+            )
+            model.eval()
+            print("Successfully loaded RNN world model")
+            return model
+        except Exception as e:
+            print(f"Failed to load as RNN model: {e}")
+            print("Trying to load as MLP model...")
+
+            # Try to load as MLP model
+            try:
+                model = load_model(
+                    self.model_path, with_scalers=False, map_location=self.device
+                )
+                model.eval()
+                print("Successfully loaded MLP world model")
+                return model
+            except Exception as e2:
+                print(f"Failed to load as MLP model: {e2}")
+                raise RuntimeError("Could not load world model as either RNN or MLP")
 
         # Set up scalers if they exist
         model_dir = os.path.dirname(self.model_path)
@@ -88,7 +112,21 @@ class WorldModelVisualizer:
             "reward": os.path.join(model_dir, "reward_scaler.joblib"),
         }
 
-        return model
+    def _display_model_info(self):
+        """Display information about the loaded model type."""
+        if isinstance(self.world_model, RNNWorldModel):
+            print(f"Model type: RNN World Model")
+            print(f"  Hidden dimension: {self.world_model.hidden_dim}")
+            print(f"  Number of layers: {self.world_model.num_layers}")
+            print(f"  State size: {self.world_model.state_size}")
+            print(f"  Action size: {self.world_model.action_size}")
+        else:
+            print(f"Model type: MLP World Model")
+            hidden_dim = getattr(self.world_model, "hidden_dim", None)
+            if hidden_dim is not None:
+                print(f"  Hidden dimension: {hidden_dim}")
+            print(f"  State size: {self.world_model.state_size}")
+            print(f"  Action size: {self.world_model.action_size}")
 
     def _display_init_buffer_info(self):
         """Display information about the valid init buffer."""
@@ -164,6 +202,9 @@ class WorldModelVisualizer:
                     "use_output_reward_scaler"
                 ]
 
+                # Check if this is an RNN model
+                self.is_rnn = isinstance(world_model, RNNWorldModel)
+
             def reset(self):
                 """Reset the environment with an initial state from the valid init buffer."""
                 # Get initial state from the valid init buffer if available
@@ -211,22 +252,45 @@ class WorldModelVisualizer:
                     action, dtype=torch.float32, device=self.device
                 ).unsqueeze(0)
 
-                # Prepare input for world model
-                model_input = torch.cat([self.state, action_tensor], dim=1)
+                if self.is_rnn:
+                    # For RNN model, we need to create a sequence input
+                    # Since we're doing single-step prediction, we create a sequence of length 1
+                    model_input = torch.cat([self.state, action_tensor], dim=1)
+                    model_input = model_input.unsqueeze(
+                        1
+                    )  # Add sequence dimension: (batch_size, 1, state_size + action_size)
 
-                # Get prediction from world model
-                with torch.no_grad():
-                    prediction = self.world_model(
-                        model_input,
-                        use_input_state_scaler=self.use_scalers,
-                        use_input_action_scaler=self.use_scalers,
-                        use_output_state_scaler=True,
-                        use_output_reward_scaler=self.use_output_reward_scaler,
-                    )
+                    # Get prediction from RNN world model
+                    with torch.no_grad():
+                        prediction = self.world_model(
+                            model_input,
+                            use_input_state_scaler=self.use_scalers,
+                            use_input_action_scaler=self.use_scalers,
+                            use_output_state_scaler=True,
+                            use_output_reward_scaler=self.use_output_reward_scaler,
+                        )
 
-                # Extract next state and reward
-                next_state = prediction[:, : self.state_size]
-                reward = prediction[:, self.state_size]
+                    # Remove sequence dimension and extract outputs
+                    prediction = prediction.squeeze(1)  # (batch_size, state_size + 1)
+                    next_state = prediction[:, : self.state_size]
+                    reward = prediction[:, self.state_size]
+                else:
+                    # For MLP model, use the original approach
+                    model_input = torch.cat([self.state, action_tensor], dim=1)
+
+                    # Get prediction from world model
+                    with torch.no_grad():
+                        prediction = self.world_model(
+                            model_input,
+                            use_input_state_scaler=self.use_scalers,
+                            use_input_action_scaler=self.use_scalers,
+                            use_output_state_scaler=True,
+                            use_output_reward_scaler=self.use_output_reward_scaler,
+                        )
+
+                    # Extract next state and reward
+                    next_state = prediction[:, : self.state_size]
+                    reward = prediction[:, self.state_size]
 
                 # Update state
                 self.state = next_state
@@ -783,6 +847,62 @@ class WorldModelVisualizer:
 
         print(f"Frames saved to: {frames_dir}")
 
+    def test_sequence_prediction(self):
+        """Test sequence prediction if using RNN model."""
+        if isinstance(self.world_model, RNNWorldModel):
+            print("\n" + "=" * 50)
+            print("TESTING RNN SEQUENCE PREDICTION")
+            print("=" * 50)
+
+            # Get imag_horizon from config
+            imag_horizon = self.config["dreamer_agent_trainer"]["imag_horizon"]
+            print(f"Testing sequence prediction with imag_horizon: {imag_horizon}")
+
+            # Create test data
+            batch_size = 2
+            initial_state = torch.randn(
+                batch_size, self.world_model.state_size, device=self.device
+            )
+            actions = torch.randn(
+                batch_size,
+                imag_horizon,
+                self.world_model.action_size,
+                device=self.device,
+            )
+
+            print(f"Initial state shape: {initial_state.shape}")
+            print(f"Actions shape: {actions.shape}")
+
+            # Test sequence prediction
+            with torch.no_grad():
+                states, rewards = self.world_model.predict_sequence(
+                    initial_state,
+                    actions,
+                    use_input_state_scaler=self.config["world_model_trainer"][
+                        "use_scalers"
+                    ],
+                    use_input_action_scaler=self.config["world_model_trainer"][
+                        "use_scalers"
+                    ],
+                    use_output_state_scaler=True,
+                    use_output_reward_scaler=self.config["world_model_trainer"][
+                        "use_output_reward_scaler"
+                    ],
+                )
+
+            print(f"Predicted states shape: {states.shape}")
+            print(f"Predicted rewards shape: {rewards.shape}")
+
+            # Show some statistics
+            print(
+                f"States range: [{states.min().item():.3f}, {states.max().item():.3f}]"
+            )
+            print(
+                f"Rewards range: [{rewards.min().item():.3f}, {rewards.max().item():.3f}]"
+            )
+            print("RNN sequence prediction test completed successfully!")
+            print("=" * 50)
+
     def print_statistics(self):
         """Print summary statistics."""
         print("\n" + "=" * 50)
@@ -887,6 +1007,9 @@ def main():
 
     # Create visualizer
     visualizer = WorldModelVisualizer(args.config, args.model, args.env_type)
+
+    # Test sequence prediction if using RNN model
+    visualizer.test_sequence_prediction()
 
     # Run comparison
     visualizer.run_comparison(
