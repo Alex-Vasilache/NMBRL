@@ -515,36 +515,16 @@ class WorldModelVisualizer:
             print(f"\nEpisode {episode + 1}/{num_episodes}")
 
             # Reset environments
-            actual_state = self.real_env.reset()[0]
-            predicted_state = self.pred_env.reset()
+            _ = self.real_env.reset()
+            predicted_state = self.pred_env.reset()  # sampled from buffer
 
-            # Run real environment for a few steps with random actions to get a more realistic starting state
-            print("  Running real environment for warm-up steps...")
-            warmup_steps = 100  # Number of warm-up steps
-            for step in range(warmup_steps):
-                random_action = self.real_env.action_space.sample()
-                actual_state, _, _, _, _ = self.real_env.step(random_action)
-                print(
-                    f"    Warm-up step {step + 1}: action={random_action[0]:.3f}, state={actual_state[:3]}"
-                )
-
-            # Use the final state from warm-up as the starting point for both environments
-            if hasattr(self.pred_env, "state") and self.pred_env.state is not None:
-                # Set the predicted environment to use the warm-up state
-                warmup_state = torch.tensor(
-                    actual_state, dtype=torch.float32, device=self.device
-                ).unsqueeze(0)
-                self.pred_env.state = warmup_state
-                predicted_state = actual_state.copy()
-                print(
-                    f"  Using warm-up state as starting point: {actual_state[:3]}..."
-                )  # Show first 3 elements
-
-            state = self._get_state_from_dmc_state(actual_state)
-
+            state = self._get_state_from_dmc_state(predicted_state)
+            self.real_env.env.physics.set_state(state)
+            self.real_env.env.physics.step()
             self.pred_env_visual.env.physics.set_state(state)
+            self.pred_env_visual.env.physics.step()
 
-            episode_actual_states = [actual_state.copy()]
+            episode_actual_states = [predicted_state.copy()]
             episode_predicted_states = [predicted_state.copy()]
             episode_actual_rewards = []
             episode_predicted_rewards = []
@@ -561,9 +541,7 @@ class WorldModelVisualizer:
                 # Generate actions using a simple policy
                 actions = []
                 for step in range(rollout_length):
-                    state = self._get_state_from_dmc_state(
-                        actual_state
-                    )  # pos, angle, vel, angle_vel
+                    state = self._get_state_from_dmc_state(predicted_state)
                     # Simple swing-up policy
                     action = np.array(
                         [0.5 * np.sin(step * 0.1) - 0.1 * state[0] - 0.05 * state[2]]
@@ -573,7 +551,7 @@ class WorldModelVisualizer:
 
             # Execute real environment rollout
             print("  Executing real environment rollout...")
-            actual_rollout_states = [actual_state.copy()]
+            actual_rollout_states = [predicted_state.copy()]
             actual_rollout_rewards = []
 
             for step, action in enumerate(actions):
@@ -657,7 +635,7 @@ class WorldModelVisualizer:
                                 # Arrow parameters
                                 center_x = frame_width // 2
                                 center_y = frame_height - 50
-                                max_arrow_length = 80
+                                max_arrow_length = 150
 
                                 # Calculate arrow length based on magnitude (clamp to reasonable range)
                                 arrow_length = int(
