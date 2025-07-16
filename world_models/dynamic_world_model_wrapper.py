@@ -383,16 +383,38 @@ class WorldModelWrapper(DummyVecEnv):
 
         # It's possible to be reset before the first model is loaded and has a valid init state
         if self.nn_model is not None and self.nn_model.valid_init_state is not None:
-            random_idxs = np.random.randint(
-                0, self.nn_model.valid_init_state.shape[0], self.num_envs
-            )
+            buffer_size = self.nn_model.valid_init_state.shape[0]
+            half_envs = self.num_envs // 2
+            remaining_envs = self.num_envs - half_envs
+
+            # Get latest half from the end of the buffer
+            latest_start_idx = max(0, buffer_size - half_envs)
+            latest_idxs = np.arange(latest_start_idx, buffer_size)
+            if len(latest_idxs) < half_envs:
+                # If buffer is smaller than half_envs, pad with random indices
+                needed = half_envs - len(latest_idxs)
+                random_padding = np.random.randint(0, buffer_size, needed)
+                latest_idxs = np.concatenate([latest_idxs, random_padding])
+
+            # Get random half from the rest of the buffer
+            if buffer_size > half_envs:
+                remaining_buffer_size = buffer_size - half_envs
+                random_idxs = np.random.randint(
+                    0, remaining_buffer_size, remaining_envs
+                )
+            else:
+                random_idxs = np.random.randint(0, buffer_size, remaining_envs)
+
+            # Combine indices
+            combined_idxs = np.concatenate([latest_idxs[:half_envs], random_idxs])
+
             # print(
-            #     f"[{datetime.now()}] Resetting with valid init state from replay using indices: {random_idxs}"
+            #     f"[{datetime.now()}] Resetting with valid init state from replay using indices: {combined_idxs}"
             # )
 
             device = resolve_device("global", self.config["global"])
             self.state = self.nn_model.valid_init_state[
-                random_idxs
+                combined_idxs
             ]  # these are states in the original environment range
 
             # Ensure state is on the correct device
@@ -403,7 +425,7 @@ class WorldModelWrapper(DummyVecEnv):
 
             if remove_from_replay_buffer:
                 self.nn_model.valid_init_state = np.delete(
-                    self.nn_model.valid_init_state, random_idxs, axis=0
+                    self.nn_model.valid_init_state, combined_idxs, axis=0
                 )
 
             if (
