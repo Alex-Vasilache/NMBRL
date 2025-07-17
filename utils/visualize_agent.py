@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import joblib
 
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from utils.tools import seed_everything
@@ -35,7 +36,10 @@ def find_latest_agent_checkpoint(run_dir):
     checkpoints_dir = os.path.join(run_dir, "actor_logs", "checkpoints")
 
     if not os.path.exists(checkpoints_dir):
-        return None, None
+        # Fallback: look for checkpoints/ directly under run_dir
+        checkpoints_dir = os.path.join(run_dir, "checkpoints")
+        if not os.path.exists(checkpoints_dir):
+            return None, None
 
     # Find all .zip files
     checkpoint_files = glob.glob(os.path.join(checkpoints_dir, "*.zip"))
@@ -110,7 +114,15 @@ def load_run_config(run_dir):
     }
 
 
-def evaluate_agent(agent, env, n_episodes=10, render=True, verbose=True):
+def evaluate_agent(
+    agent,
+    env,
+    n_episodes=10,
+    render=True,
+    verbose=True,
+    state_scaler=None,
+    use_output_state_scaler=False,
+):
     """Evaluate an agent for multiple episodes and return statistics."""
     episode_rewards = []
     episode_lengths = []
@@ -130,21 +142,28 @@ def evaluate_agent(agent, env, n_episodes=10, render=True, verbose=True):
             else:
                 obs = state
 
+            # Apply state scaler if available and not using output state scaler
+            scaled_obs = obs
+            if state_scaler is not None and not use_output_state_scaler:
+                try:
+                    scaled_obs = state_scaler.transform(scaled_obs)
+                except Exception as e:
+                    print(f"[VISUALIZER] Warning: State scaling failed: {e}")
+                    scaled_obs = obs
+
             # Get action from agent
             if hasattr(agent, "predict"):
                 # Stable-Baselines3 format
-                action, _ = agent.predict(obs, deterministic=True)
+                action, _ = agent.predict(scaled_obs, deterministic=True)
             else:
                 # Custom agent format (like DREAMER)
-                action = agent.get_action(obs, deterministic=True)
+                action = agent.get_action(scaled_obs, deterministic=True)
 
             # Step environment
             next_state, reward, terminated, info = env.step(action)
 
             if render:
                 env.render()
-                # Small delay to make visualization visible
-                time.sleep(0.02)
 
             # Handle different reward formats
             if isinstance(reward, (list, tuple, np.ndarray)):
@@ -271,7 +290,70 @@ def main():
         default=42,
         help="Random seed (default: 42)",
     )
+    parser.add_argument(
+        "--use-state-scaler",
+        action="store_true",
+        default=False,
+        help="Use state scaler from run directory if available (default: False)",
+    )
+    parser.add_argument(
+        "--force-cpu",
+        action="store_true",
+        default=False,
+        help="Force model loading and evaluation on CPU (overrides checkpoint device)",
+    )
     args = parser.parse_args()
+
+    # Patch DreamerACAgent.load to support force-cpu
+    import types
+    from agents import dreamer_ac_agent as dreamer_mod
+
+    orig_load = dreamer_mod.DreamerACAgent.load
+
+    def patched_load(path, env=None, force_cpu=False):
+        import torch
+        import zipfile, os, tempfile, pickle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(path, "r") as zipf:
+                zipf.extractall(temp_dir)
+            training_info_path = os.path.join(temp_dir, "training_info.pkl")
+            with open(training_info_path, "rb") as f:
+                training_info = pickle.load(f)
+            config = training_info["config"]
+            global_config = training_info["global_config"]
+            if force_cpu:
+                config["device"] = "cpu"
+                global_config["device"] = "cpu"
+            temp_log_dir = os.path.join(
+                tempfile.gettempdir(),
+                f"dreamer_load_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            )
+            agent = dreamer_mod.DreamerACAgent(
+                global_config, env, tensorboard_log=temp_log_dir
+            )
+            # Always use CPU if forced, else use config["device"]
+            map_location = "cpu" if force_cpu else config["device"]
+            actor_path = os.path.join(temp_dir, "actor.pth")
+            actor_data = torch.load(
+                actor_path, map_location=map_location, weights_only=False
+            )
+            agent.agent.actor.load_state_dict(actor_data["model_state_dict"])
+            critic_path = os.path.join(temp_dir, "critic.pth")
+            critic_data = torch.load(
+                critic_path, map_location=map_location, weights_only=False
+            )
+            agent.agent.critic.load_state_dict(critic_data["model_state_dict"])
+            agent.episode_rewards = training_info.get("episode_rewards", [])
+            agent.episode_lengths = training_info.get("episode_lengths", [])
+            agent.training_losses = training_info.get("training_losses", [])
+            agent.agent.actor.eval()
+            agent.agent.critic.eval()
+            return agent
+
+    dreamer_mod.DreamerACAgent.load = staticmethod(
+        lambda path, env=None: patched_load(path, env, force_cpu=args.force_cpu)
+    )
 
     # Determine run directory
     if args.run_dir:
@@ -292,6 +374,22 @@ def main():
     # Load configuration
     config = load_run_config(run_dir)
     seed_everything(args.seed)
+
+    # Load state scaler if requested and available
+    state_scaler = None
+    use_scaler = args.use_state_scaler
+    scaler_path = os.path.join(run_dir, "state_scaler.joblib")
+    if use_scaler and os.path.exists(scaler_path):
+        try:
+            state_scaler = joblib.load(scaler_path)
+            print(f"[VISUALIZER] Loaded state scaler from: {scaler_path}")
+        except Exception as e:
+            print(f"[VISUALIZER] Warning: Failed to load state scaler: {e}")
+            state_scaler = None
+    elif use_scaler:
+        print(
+            f"[VISUALIZER] Warning: State scaler requested but not found at {scaler_path}"
+        )
 
     # Determine checkpoint and agent type
     if args.checkpoint:
@@ -353,12 +451,17 @@ def main():
 
         # Evaluate agent
         print(f"[VISUALIZER] Starting evaluation for {args.n_episodes} episodes...")
+        use_output_state_scaler = config.get("world_model_trainer", {}).get(
+            "use_output_state_scaler", False
+        )
         episode_rewards, episode_lengths = evaluate_agent(
             agent,
             env,
             n_episodes=args.n_episodes,
             render=not args.no_render,
             verbose=True,
+            state_scaler=state_scaler,
+            use_output_state_scaler=use_output_state_scaler,
         )
 
         # Print and log results
