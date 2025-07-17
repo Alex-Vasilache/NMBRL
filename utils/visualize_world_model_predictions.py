@@ -19,6 +19,7 @@ import cv2
 
 TARGET_HEIGHT, TARGET_WIDTH = 270, 360
 FPS = 20
+PAUSE_SECONDS = 0.0
 
 # Set DMC render resolution before importing DMCWrapper
 os.environ["DMC_RENDER_WIDTH"] = str(TARGET_WIDTH)  # or 720 for high-res
@@ -1183,10 +1184,9 @@ class WorldModelVisualizer:
 
             all_combined_frames.extend(combined_frames)
             # Add 0.5s (15 frames at 30 fps) of black frames between episodes, except after the last
-            pause_seconds = 0.75
             if episode_idx < len(self.frames_actual) - 1 and combined_frames:
                 black_frame = np.zeros_like(combined_frames[0])
-                all_combined_frames.extend([black_frame] * int(pause_seconds * FPS))
+                all_combined_frames.extend([black_frame] * int(PAUSE_SECONDS * FPS))
 
         # --- Create a single video from all episodes ---
         if all_combined_frames:
