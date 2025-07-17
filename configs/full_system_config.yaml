@@ -28,7 +28,7 @@ data_generator:
 world_model_trainer:
   max_valid_init_buffer_size: 1000000  # Adjust as needed
   # Training trigger settings
-  new_data_threshold: 2000
+  new_data_threshold: 1000
   watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 1024
@@ -95,17 +95,17 @@ evo_agent_trainer:
   # NETWORK ARCHITECTURE
   # =================================================================
   network:
-    net_size: [4, 4, 1]  # 3D grid dimensions for hidden layer neurons: [width, height, depth]. Total hidden neurons = width × height × depth
-    spike_steps: 4  # Number of SNN simulation timesteps per environment step (higher = more temporal dynamics)
+    net_size: [8, 8, 1]  # 3D grid dimensions for hidden layer neurons: [width, height, depth]. Total hidden neurons = width × height × depth
+    spike_steps: 16  # Number of SNN simulation timesteps per environment step (higher = more temporal dynamics)
     max_vthr: 1000  # Maximum membrane potential threshold for LIF neurons (controls spiking sensitivity)
     spatial: true  # Enable spatial embedding: connection probabilities decay with distance in 3D space
-    prune_unconnected: false  # Remove isolated neurons and disconnected subgraphs to improve efficiency
+    prune_unconnected: true  # Remove isolated neurons and disconnected subgraphs to improve efficiency
 
   # =================================================================
   # EVOLUTIONARY ALGORITHM PARAMETERS
   # =================================================================
   evolution:
-    num_iterations: 1000  # Total number of evolutionary generations to run
+    num_iterations: 100000  # Total number of evolutionary generations to run
     num_gene_samples: 16  # Population size: number of individual networks evaluated per generation
     evolution_method: "classic"  # Evolutionary strategy: 'classic' (standard GA) or 'map_elites' (quality-diversity)
 
