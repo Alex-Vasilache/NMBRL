@@ -55,8 +55,7 @@ class EvoAgent:
 
         self.args.time = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.task = Task(self.args, env=self.env)
-        self.data_path = self.task.data_path
-        self.args.data_path = self.data_path
+
         self.increase_every_nth = 1
 
         output_features = self.task.out_feat
