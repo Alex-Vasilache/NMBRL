@@ -8,8 +8,9 @@ from dm_control import suite
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
-WINDOW_WIDTH = 360
-WINDOW_HEIGHT = 270
+# Allow override of window size via environment variables
+WINDOW_WIDTH = int(os.environ.get("DMC_RENDER_WIDTH", 360))
+WINDOW_HEIGHT = int(os.environ.get("DMC_RENDER_HEIGHT", 270))
 
 TASK_NAME = "swingup"
 

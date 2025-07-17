@@ -17,6 +17,13 @@ from typing import Dict, List, Tuple, Optional
 import time
 import cv2
 
+TARGET_HEIGHT, TARGET_WIDTH = 270, 360
+FPS = 30
+
+# Set DMC render resolution before importing DMCWrapper
+os.environ["DMC_RENDER_WIDTH"] = str(TARGET_WIDTH)  # or 720 for high-res
+os.environ["DMC_RENDER_HEIGHT"] = str(TARGET_HEIGHT)  # or 540 for high-res
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
@@ -511,12 +518,20 @@ class WorldModelVisualizer:
         )
         print(f"Rollout length: {rollout_length} steps")
 
+        last_actual_state = None
         for episode in range(num_episodes):
             print(f"\nEpisode {episode + 1}/{num_episodes}")
 
             # Reset environments
             _ = self.real_env.reset()
-            predicted_state = self.pred_env.reset()  # sampled from buffer
+            if episode == 0 or last_actual_state is None:
+                predicted_state = self.pred_env.reset()  # sampled from buffer
+            else:
+                # Set predicted env initial state to last actual state from previous episode
+                self.pred_env.state = torch.tensor(
+                    last_actual_state, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
+                predicted_state = last_actual_state.copy()
 
             state = self._get_state_from_dmc_state(predicted_state)
             self.real_env.env.physics.set_state(state)
@@ -640,6 +655,10 @@ class WorldModelVisualizer:
             self.actions.append(np.array(episode_actions))
             self.frames_actual.append(episode_frames_actual)
             self.frames_predicted.append(episode_frames_predicted)
+
+            # Save last actual state for next episode
+            if len(episode_actual_states) > 0:
+                last_actual_state = episode_actual_states[-1].copy()
 
             print(f"  Rollout completed in {len(actions)} steps")
             print(f"  Total actual reward: {sum(actual_rollout_rewards):.3f}")
@@ -905,8 +924,7 @@ class WorldModelVisualizer:
         frames_dir = os.path.join(save_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
 
-        TARGET_HEIGHT, TARGET_WIDTH = 270, 360  # Match DMCWrapper real env
-
+        all_combined_frames = []  # Collect all frames for the single video
         for episode_idx, (actual_frames, predicted_frames) in enumerate(
             zip(self.frames_actual, self.frames_predicted)
         ):
@@ -920,7 +938,7 @@ class WorldModelVisualizer:
 
             actual_row = []
             predicted_row = []
-            combined_frames = []  # <-- Move initialization here
+            combined_frames = []
 
             for step_idx, (actual_frame, predicted_frame) in enumerate(
                 zip(actual_frames, predicted_frames)
@@ -1174,23 +1192,25 @@ class WorldModelVisualizer:
                 )
                 print(f"[DEBUG] Combined image saved: {combined_path}, result={result}")
 
-            # --- Create video from combined frames ---
-            if combined_frames:
-                video_path = os.path.join(
-                    episode_dir, f"combined_episode_{episode_idx + 1}.mp4"
-                )
-                height, width, _ = combined_frames[0].shape
-                fps = 30
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-                for frame in combined_frames:
-                    # Ensure frame is uint8 and RGB
-                    if frame.dtype != np.uint8:
-                        frame = frame.astype(np.uint8)
-                    # OpenCV expects BGR
-                    video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                video_writer.release()
-                print(f"[DEBUG] Combined video saved: {video_path}")
+            all_combined_frames.extend(combined_frames)
+            # Add 0.5s (15 frames at 30 fps) of black frames between episodes, except after the last
+            pause_seconds = 0.5
+            if episode_idx < len(self.frames_actual) - 1 and combined_frames:
+                black_frame = np.zeros_like(combined_frames[0])
+                all_combined_frames.extend([black_frame] * int(pause_seconds * FPS))
+
+        # --- Create a single video from all episodes ---
+        if all_combined_frames:
+            video_path = os.path.join(frames_dir, "all_episodes_combined.mp4")
+            height, width, _ = all_combined_frames[0].shape
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            video_writer = cv2.VideoWriter(video_path, fourcc, FPS, (width, height))
+            for frame in all_combined_frames:
+                if frame.dtype != np.uint8:
+                    frame = frame.astype(np.uint8)
+                video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            video_writer.release()
+            print(f"[DEBUG] Combined video saved: {video_path}")
         print(f"Frames saved to: {frames_dir}")
 
     def test_sequence_prediction(self):
