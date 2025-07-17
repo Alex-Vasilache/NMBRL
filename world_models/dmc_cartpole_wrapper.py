@@ -11,6 +11,8 @@ from stable_baselines3.common.monitor import Monitor
 WINDOW_WIDTH = 360
 WINDOW_HEIGHT = 270
 
+TASK_NAME = "swingup"
+
 
 class DMCVecEnvWrapper(DummyVecEnv):
     def __init__(
@@ -23,7 +25,7 @@ class DMCVecEnvWrapper(DummyVecEnv):
             [
                 lambda: DMCWrapper(
                     domain_name="cartpole",
-                    task_name="swingup",
+                    task_name=TASK_NAME,
                     render_mode=None,
                     max_episode_steps=max_episode_steps,
                 )
@@ -149,7 +151,7 @@ def make_dmc_env(
     def _init() -> gym.Env:
         env = DMCWrapper(
             "cartpole",
-            "swingup",
+            TASK_NAME,
             render_mode=render_mode,
             max_episode_steps=max_episode_steps,
             dt_simulation=dt_simulation,

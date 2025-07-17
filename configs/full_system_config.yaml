@@ -36,7 +36,7 @@ world_model_trainer:
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.0000001
+  learning_rate: 0.000001
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5

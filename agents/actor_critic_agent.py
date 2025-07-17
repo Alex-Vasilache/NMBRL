@@ -164,7 +164,7 @@ class ActorCriticAgent(nn.Module):
             critic_losses -= value_dists.log_prob(slow_target.mode().detach())
 
         critic_losses = critic_losses.unsqueeze(-1)  # [sequence_length, batch_size, 1]
-        critic_loss = torch.mean(critic_losses[:-1] * weights[:-1])
+        critic_loss = torch.sum(critic_losses[:-1] * weights[:-1])
 
         if self.config["reward_EMA"]:
             offset, scale = self.reward_ema(lambda_returns[:-1], self.ema_vals)
@@ -196,8 +196,8 @@ class ActorCriticAgent(nn.Module):
 
         # Separate policy gradient loss from entropy bonus
         policy_gradient_loss = -(actor_target * weights[:-1])
-        policy_gradient_loss_mean = torch.mean(policy_gradient_loss)
-        entropy_bonus_mean = torch.mean(entropy_loss)
+        policy_gradient_loss_mean = torch.sum(policy_gradient_loss)
+        entropy_bonus_mean = torch.sum(entropy_loss)
 
         actor_loss = (
             policy_gradient_loss_mean - entropy_bonus_mean
