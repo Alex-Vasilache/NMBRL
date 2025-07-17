@@ -3,7 +3,7 @@ global:
   seed: 41
   run_folder_prefix: "runs"
   env_type: "dmc" # "dmc" or "physical"
-  device: "cpu" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
+  device: "auto" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
   
 # TensorBoard logging configuration
 tensorboard:
@@ -13,8 +13,8 @@ tensorboard:
 
 # Configuration for the main run_full_system.py script
 run_system:
-  head_start_seconds: 1
-  create_new_consoles: true # If false, output will be piped to the main console
+  head_start_seconds: 5
+  create_new_consoles: false # If false, output will be piped to the main console
 
 # Configuration for learning/dynamic_data_generator.py
 data_generator:
@@ -22,13 +22,13 @@ data_generator:
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
-  render_enabled: true  # Set to false for headless environments, true for local development
+  render_enabled: false  # Set to false for headless environments, true for local development
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
   max_valid_init_buffer_size: 1000000  # Adjust as needed
   # Training trigger settings
-  new_data_threshold: 2000
+  new_data_threshold: 1000
   watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 1024
@@ -48,14 +48,14 @@ world_model_trainer:
   model_type: "rnn" # "mlp" or "rnn"
   num_layers: 4
   dropout: 0.3
-  context_length: 1   # Number of context frames given to the model
-  prediction_length: 15 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
+  context_length: 5   # Number of context frames given to the model
+  prediction_length: 45 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
-  agent_type: "EVO" # "PPO" or "SAC" or "DREAMER" or "EVO"
+  agent_type: "SAC" # "PPO" or "SAC" or "DREAMER" or "EVO"
   # Environment settings
-  n_envs: 16000
+  n_envs: 1024
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -129,20 +129,21 @@ evo_agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 16
+  batch_size: 1024
   learning_rate: 3e-5
   eps: 1e-5
-  grad_clip: 100.0 # try 1.0
+  grad_clip: 1.0 # try 1.0
   reward_EMA: True
   deterministic_run: False
   device: "global" # Uses global.device setting
+  loss_aggregation: "mean" # "mean" or "sum"
 
   # Behavior
   gamma: 0.997            # Discount factor for the reward
   discount_lambda: 0.95   # return mixing factor
   imag_horizon: 15        # Horizon for imagined trajectories
 
-  # Model
+    # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
   units: 64               # Number of neurons in each layer # todo 32-64
@@ -159,7 +160,7 @@ dreamer_agent_trainer:
   # Actor
   actor:
     layers: 4 # todo 2
-    dist: 'tanh_normal' # maybe TanhBijector or tanh_normal
+    dist: 'normal' # maybe TanhBijector or tanh_normal
     entropy: 3e-4
     unimix_ratio: 0.01
     std: 'learned'
