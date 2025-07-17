@@ -8,6 +8,7 @@ from datetime import datetime
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import joblib
+import imageio
 
 from world_models.dmc_cartpole_wrapper import DMCCartpoleWrapper as wrapper
 from utils.tools import seed_everything
@@ -122,20 +123,58 @@ def evaluate_agent(
     verbose=True,
     state_scaler=None,
     use_output_state_scaler=False,
+    video_output="show",
+    video_path=None,
 ):
     """Evaluate an agent for multiple episodes and return statistics."""
     episode_rewards = []
     episode_lengths = []
+    all_frames = []
 
     for episode in range(n_episodes):
         state = env.reset()
+        # Randomize initial state for DMC CartPole
+        try:
+            base_env = env
+            # Unwrap VecNormalize, DummyVecEnv, etc.
+            if hasattr(base_env, "venv"):
+                base_env = base_env.venv
+            if (
+                hasattr(base_env, "envs")
+                and isinstance(base_env.envs, list)
+                and len(base_env.envs) > 0
+            ):
+                base_env = base_env.envs[0]
+            if hasattr(base_env, "env"):
+                base_env = base_env.env
+            if hasattr(base_env, "physics"):
+                qpos = np.array(base_env.physics.data.qpos)
+                qvel = np.array(base_env.physics.data.qvel)
+                # Randomize cart position and pole angle
+                qpos[0] = np.random.uniform(-1.0, 1.0)  # cart position
+                qpos[1] = np.random.uniform(-0.5, 0.5)  # pole angle (radians)
+                # Randomize velocities
+                qvel[:] = np.random.uniform(-0.2, 0.2, size=qvel.shape)
+                base_env.physics.set_state(np.concatenate([qpos, qvel]))
+                # Get the new observation after setting the state
+                if hasattr(base_env, "_get_obs"):
+                    state = base_env._get_obs()
+                elif hasattr(base_env, "get_observation"):
+                    state = base_env.get_observation()
+                else:
+                    # As fallback, step with zero action to get new obs
+                    zero_action = np.zeros(base_env.action_space.shape)
+                    state = base_env.step(zero_action)[0]
+                print(f"[DEBUG] Randomized initial state: {state}")
+        except Exception as e:
+            print(f"[DEBUG] Could not randomize initial state: {e}")
         episode_reward = 0
         episode_length = 0
-        terminated = False
+        done = False
 
         start_time = time.time()
 
-        while not terminated:
+        while not done:
             # Handle different observation formats
             if isinstance(state, tuple):
                 obs = state[0] if hasattr(state[0], "shape") else state
@@ -146,6 +185,8 @@ def evaluate_agent(
             scaled_obs = obs
             if state_scaler is not None and not use_output_state_scaler:
                 try:
+                    if isinstance(scaled_obs, np.ndarray) and scaled_obs.ndim == 1:
+                        scaled_obs = scaled_obs.reshape(1, -1)
                     scaled_obs = state_scaler.transform(scaled_obs)
                 except Exception as e:
                     print(f"[VISUALIZER] Warning: State scaling failed: {e}")
@@ -159,11 +200,32 @@ def evaluate_agent(
                 # Custom agent format (like DREAMER)
                 action = agent.get_action(scaled_obs, deterministic=True)
 
-            # Step environment
-            next_state, reward, terminated, info = env.step(action)
+            try:
+                step_result = base_env.step(action)
+            except Exception as e:
+                print(f"[DEBUG] Exception during step: {e}")
+                break
+            if len(step_result) == 5:
+                next_state, reward, terminated, truncated, info = step_result
+            else:
+                next_state, reward, terminated, info = step_result
+                truncated = False
+            done = terminated or truncated
 
-            if render:
-                env.render()
+            if video_output == "show":
+                if render:
+                    env.render()
+            elif video_output == "mp4":
+                frame = env.render()
+                if isinstance(frame, list) and len(frame) > 0:
+                    frame = frame[0]
+                if (
+                    frame is not None
+                    and not isinstance(frame, list)
+                    and hasattr(frame, "shape")
+                    and len(frame.shape) >= 2
+                ):
+                    all_frames.append(frame)
 
             # Handle different reward formats
             if isinstance(reward, (list, tuple, np.ndarray)):
@@ -174,7 +236,12 @@ def evaluate_agent(
             state = next_state
 
             # Check for user closing render window
-            if render and isinstance(info, (list, tuple)) and len(info) > 0:
+            if (
+                video_output == "show"
+                and render
+                and isinstance(info, (list, tuple))
+                and len(info) > 0
+            ):
                 info_dict = info[0] if isinstance(info[0], dict) else {}
                 if info_dict.get("sim_should_stop", False):
                     print(
@@ -193,6 +260,17 @@ def evaluate_agent(
                 f"Length = {episode_length}, "
                 f"Time = {episode_time:.1f}s"
             )
+
+    # Filter out invalid frames and save video if requested
+    if video_output == "mp4" and video_path is not None:
+        all_frames = [
+            f
+            for f in all_frames
+            if f is not None and hasattr(f, "shape") and len(f.shape) >= 2
+        ]
+        if all_frames:
+            imageio.mimsave(video_path, all_frames, fps=50)
+            print(f"[VISUALIZER] Saved combined video to: {video_path}")
 
     return episode_rewards, episode_lengths
 
@@ -301,6 +379,13 @@ def main():
         action="store_true",
         default=False,
         help="Force model loading and evaluation on CPU (overrides checkpoint device)",
+    )
+    parser.add_argument(
+        "--video-output",
+        type=str,
+        choices=["show", "mp4"],
+        default="show",
+        help="'show' to display live, 'mp4' to save combined video as mp4 (30 fps)",
     )
     args = parser.parse_args()
 
@@ -436,7 +521,10 @@ def main():
     )
 
     # Create environment
-    render_mode = None if args.no_render else "human"
+    if args.video_output == "mp4":
+        render_mode = "rgb_array"
+    else:
+        render_mode = None if args.no_render else "human"
     env = wrapper(
         seed=args.seed,
         n_envs=1,
@@ -454,6 +542,9 @@ def main():
         use_output_state_scaler = config.get("world_model_trainer", {}).get(
             "use_output_state_scaler", False
         )
+        video_path = None
+        if args.video_output == "mp4":
+            video_path = os.path.join(tb_log_dir, "evaluation_combined.mp4")
         episode_rewards, episode_lengths = evaluate_agent(
             agent,
             env,
@@ -462,6 +553,8 @@ def main():
             verbose=True,
             state_scaler=state_scaler,
             use_output_state_scaler=use_output_state_scaler,
+            video_output=args.video_output,
+            video_path=video_path,
         )
 
         # Print and log results

@@ -22,7 +22,7 @@ data_generator:
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
-  render_enabled: false  # Set to false for headless environments, true for local development
+  render_enabled: true  # Set to false for headless environments, true for local development
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:
@@ -31,12 +31,12 @@ world_model_trainer:
   new_data_threshold: 1000
   watcher_interval_seconds: 1
   # Model architecture
-  hidden_dim: 1024
+  hidden_dim: 32
   # Training parameters
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.00004
+  learning_rate: 0.0004
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -46,16 +46,16 @@ world_model_trainer:
   use_output_reward_scaler: True
   # RNN-specific settings
   model_type: "rnn" # "mlp" or "rnn"
-  num_layers: 4
+  num_layers: 2
   dropout: 0.3
   context_length: 5   # Number of context frames given to the model
   prediction_length: 45 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
-  agent_type: "SAC" # "PPO" or "SAC" or "DREAMER" or "EVO"
+  agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER" or "EVO"
   # Environment settings
-  n_envs: 1024
+  n_envs: 16
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -129,8 +129,8 @@ evo_agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 1024
-  learning_rate: 3e-5
+  batch_size: 16
+  learning_rate: 4e-4
   eps: 1e-5
   grad_clip: 1.0 # try 1.0
   reward_EMA: True
@@ -146,10 +146,10 @@ dreamer_agent_trainer:
     # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 64               # Number of neurons in each layer # todo 32-64
+  units: 32               # Number of neurons in each layer # todo 32-64
 
   # Logging
-  save_frequency: 100  # Save models every N episodes (None to disable)
+  save_frequency: 1000  # Save models every N episodes (None to disable)
   eval_frequency: 200  # Evaluate every N episodes (None to disable)
   print_frequency: 100  # Print every N episodes (None to disable)
 
@@ -159,7 +159,7 @@ dreamer_agent_trainer:
 
   # Actor
   actor:
-    layers: 4 # todo 2
+    layers: 2 # todo 2
     dist: 'normal' # maybe TanhBijector or tanh_normal
     entropy: 3e-4
     unimix_ratio: 0.01
@@ -172,7 +172,7 @@ dreamer_agent_trainer:
 
   # Critic
   critic:
-    layers: 4 # todo 2
+    layers: 2 # todo 2
     dist: 'symlog_disc'
     outscale: 0.0
     slow_target: True

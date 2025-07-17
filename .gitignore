@@ -23,4 +23,5 @@ runs*
 full_system_run*
 completed_runs/*
 output/*
-world_model_visualization/*
+utils/visualize_agent.py
+world_model_visualization*

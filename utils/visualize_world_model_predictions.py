@@ -907,8 +907,8 @@ class WorldModelVisualizer:
         )
         plt.close()
 
-    def _save_frames(self, save_dir: str):
-        """Save rendered frames if available."""
+    def _save_frames(self, save_dir: str, overlap_video: bool = False):
+        """Save rendered frames if available. If overlap_video is True, blend actual and predicted frames."""
         import cv2
 
         frames_dir = os.path.join(save_dir, "frames")
@@ -1018,41 +1018,88 @@ class WorldModelVisualizer:
                     predicted_disp = np.full(
                         (TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8
                     )
-                combined_actual = actual_disp
-                combined_predicted = predicted_disp
-                combined_image = np.concatenate(
-                    [combined_actual, combined_predicted], axis=1
-                )
-                # Add titles above each half, centered vertically
+
+                # Ensure both frames are the same size
+                if actual_disp.shape[:2] != (TARGET_HEIGHT, TARGET_WIDTH):
+                    actual_disp = cv2.resize(actual_disp, (TARGET_WIDTH, TARGET_HEIGHT))
+                if predicted_disp.shape[:2] != (TARGET_HEIGHT, TARGET_WIDTH):
+                    predicted_disp = cv2.resize(
+                        predicted_disp, (TARGET_WIDTH, TARGET_HEIGHT)
+                    )
+
+                if overlap_video:
+                    # Blend actual and predicted frames: predicted at full alpha, actual at 0.5
+                    combined_image = cv2.addWeighted(
+                        actual_disp, 0.5, predicted_disp, 1.0, 0
+                    )
+                    # Overlay titles with matching alpha
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale_title = 1.0
+                    font_thickness = 2
+                    # 'Predicted' (full alpha)
+                    cv2.putText(
+                        combined_image,
+                        "Predicted",
+                        (30, 50),
+                        font,
+                        font_scale_title,
+                        (255, 255, 255),
+                        font_thickness,
+                        cv2.LINE_AA,
+                    )
+                    # 'Actual' (alpha 0.5, so draw with lower intensity)
+                    overlay = combined_image.copy()
+                    cv2.putText(
+                        overlay,
+                        "Actual",
+                        (30, 100),
+                        font,
+                        font_scale_title,
+                        (255, 255, 255),
+                        font_thickness,
+                        cv2.LINE_AA,
+                    )
+                    cv2.addWeighted(
+                        overlay, 0.5, combined_image, 0.5, 0, dst=combined_image
+                    )
+                else:
+                    # Side-by-side mode: draw titles as before
+                    combined_image = np.concatenate(
+                        [actual_disp, predicted_disp], axis=1
+                    )
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale_title = 1.0
+                    font_thickness = 1
+                    color = (50, 50, 50)  # dark gray
+                    # Set frame_height, frame_width for overlays
+                    frame_height, frame_width, _ = combined_image.shape
+                    half_width = frame_width // 2
+                    title_y = frame_height // 6  # 1/6th from the top
+                    # Actual (left)
+                    cv2.putText(
+                        combined_image,
+                        "Actual",
+                        (half_width // 2 - 40, title_y),
+                        font,
+                        font_scale_title,
+                        color,
+                        font_thickness,
+                        cv2.LINE_AA,
+                    )
+                    # Predicted (right)
+                    cv2.putText(
+                        combined_image,
+                        "Predicted",
+                        (half_width + half_width // 2 - 55, title_y),
+                        font,
+                        font_scale_title,
+                        color,
+                        font_thickness,
+                        cv2.LINE_AA,
+                    )
+                # Set frame_height, frame_width for overlays in both modes
                 frame_height, frame_width, _ = combined_image.shape
-                half_width = frame_width // 2
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale_title = 1.0  # Larger font for titles
-                font_thickness = 1
-                color = (50, 50, 50)  # dark gray
-                title_y = frame_height // 6  # 1/6th from the top
-                # Actual (left)
-                cv2.putText(
-                    combined_image,
-                    "Actual",
-                    (half_width // 2 - 40, title_y),
-                    font,
-                    font_scale_title,
-                    color,
-                    font_thickness,
-                    cv2.LINE_AA,
-                )
-                # Predicted (right)
-                cv2.putText(
-                    combined_image,
-                    "Predicted",
-                    (half_width + half_width // 2 - 55, title_y),
-                    font,
-                    font_scale_title,
-                    color,
-                    font_thickness,
-                    cv2.LINE_AA,
-                )
+
                 # Draw action arrow and value in the center near the bottom of the screen
                 bottom_margin = 40
                 arrow_y = frame_height - bottom_margin
@@ -1356,6 +1403,11 @@ def main():
         default="world_model_visualization",
         help="Output directory for plots and frames",
     )
+    parser.add_argument(
+        "--overlap-video",
+        action="store_true",
+        help="If set, create video with actual and predicted frames overlapped (actual semi-transparent on top of predicted).",
+    )
 
     args = parser.parse_args()
 
@@ -1378,6 +1430,9 @@ def main():
 
     # Print statistics
     visualizer.print_statistics()
+
+    # Save frames with overlap option
+    visualizer._save_frames(args.output_dir, overlap_video=args.overlap_video)
 
     print(f"\nVisualization complete! Check {args.output_dir} for results.")
 
