@@ -100,11 +100,6 @@ class EvoAgent:
         elif len(map_scores.shape) == 3:
             map_scores = map_scores.reshape(-1, map_scores.shape[-1])
 
-        np.savetxt(
-            os.path.join(self.data_path, self.task.game_name + ".txt"),
-            map_scores,
-            fmt="%4.0f",
-        )
         self.just_created = False
         self.test_task = None  # Will be initialized when needed for prediction
 
@@ -257,6 +252,8 @@ class EvoAgent:
             test_args.max_env_steps = 1000
             agent.test_task = Task(test_args, env=env)
             agent.just_created = True
+
+            agent.test_task.set_params([agent.search_dist.elites[0]])
 
             print(f"EvoAgent loaded from: {path}")
             return agent
