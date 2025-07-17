@@ -36,7 +36,7 @@ world_model_trainer:
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.000001
+  learning_rate: 0.00004
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -76,7 +76,7 @@ dreamer_agent_trainer:
   batch_size: 16
   learning_rate: 3e-5
   eps: 1e-5
-  grad_clip: 1.0 # try 1.0
+  grad_clip: 100.0 # try 1.0
   reward_EMA: True
   deterministic_run: False
   device: "global" # Uses global.device setting
