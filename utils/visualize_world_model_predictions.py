@@ -602,82 +602,14 @@ class WorldModelVisualizer:
                         predicted_frame = self.pred_env_visual.env.physics.render(
                             camera_id=0
                         )
-                        # Add action visualization to predicted frame
+                        # Remove action visualization from predicted frame
+                        # Only convert to BGR and back to RGB if needed for saving
                         if (
                             predicted_frame is not None
                             and len(predicted_frame.shape) == 3
                         ):
-                            # Convert to BGR for OpenCV
+                            # Convert to BGR for OpenCV compatibility, then back to RGB
                             frame_bgr = cv2.cvtColor(predicted_frame, cv2.COLOR_RGB2BGR)
-
-                            # Add action text in yellow
-                            action_text = (
-                                f"Action: {action[0]:.3f}"
-                                if len(action) > 0
-                                else "Action: N/A"
-                            )
-                            cv2.putText(
-                                frame_bgr,
-                                action_text,
-                                (10, 30),  # Position (x, y)
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7,  # Font scale
-                                (0, 255, 255),  # Yellow color in BGR
-                                2,  # Thickness
-                                cv2.LINE_AA,
-                            )
-
-                            # Add arrow based on action magnitude and sign
-                            if len(action) > 0:
-                                action_val = action[0]
-                                frame_height, frame_width = frame_bgr.shape[:2]
-
-                                # Arrow parameters
-                                center_x = frame_width // 2
-                                center_y = frame_height - 50
-                                max_arrow_length = 150
-
-                                # Calculate arrow length based on magnitude (clamp to reasonable range)
-                                arrow_length = int(
-                                    min(
-                                        abs(action_val) * max_arrow_length,
-                                        max_arrow_length,
-                                    )
-                                )
-
-                                # Calculate arrow direction based on sign
-                                if action_val > 0:
-                                    # Positive action - arrow points right
-                                    end_x = center_x + arrow_length
-                                    end_y = center_y
-                                elif action_val < 0:
-                                    # Negative action - arrow points left
-                                    end_x = center_x - arrow_length
-                                    end_y = center_y
-                                else:
-                                    # Zero action - small circle
-                                    cv2.circle(
-                                        frame_bgr,
-                                        (center_x, center_y),
-                                        5,
-                                        (0, 255, 255),
-                                        -1,
-                                    )
-                                    end_x = center_x
-                                    end_y = center_y
-
-                                # Draw arrow if action is non-zero
-                                if action_val != 0:
-                                    cv2.arrowedLine(
-                                        frame_bgr,
-                                        (center_x, center_y),
-                                        (end_x, end_y),
-                                        (0, 255, 255),  # Yellow color in BGR
-                                        3,  # Thickness
-                                        tipLength=0.3,
-                                    )
-
-                            # Convert back to RGB
                             predicted_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                         if predicted_frame is None:
                             print(f"[Warning] Predicted frame at step {step} is None.")
@@ -988,6 +920,7 @@ class WorldModelVisualizer:
 
             actual_row = []
             predicted_row = []
+            combined_frames = []  # <-- Move initialization here
 
             for step_idx, (actual_frame, predicted_frame) in enumerate(
                 zip(actual_frames, predicted_frames)
@@ -1064,21 +997,200 @@ class WorldModelVisualizer:
                         np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8)
                     )
 
-            # Combine all actual and predicted frames into a single image
-            if actual_row and predicted_row:
-                combined_actual = np.concatenate(actual_row, axis=1)
-                combined_predicted = np.concatenate(predicted_row, axis=1)
+                # Combine all actual and predicted frames into a single image PER STEP
+                if actual_frame is not None:
+                    actual_disp = actual_frame
+                else:
+                    actual_disp = np.full(
+                        (TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8
+                    )
+                if predicted_frame is not None:
+                    predicted_disp = predicted_frame
+                else:
+                    predicted_disp = np.full(
+                        (TARGET_HEIGHT, TARGET_WIDTH, 3), 255, dtype=np.uint8
+                    )
+                combined_actual = actual_disp
+                combined_predicted = predicted_disp
                 combined_image = np.concatenate(
-                    [combined_actual, combined_predicted], axis=0
+                    [combined_actual, combined_predicted], axis=1
                 )
+                # Add titles above each half, centered vertically
+                frame_height, frame_width, _ = combined_image.shape
+                half_width = frame_width // 2
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale_title = 1.0  # Larger font for titles
+                font_thickness = 1
+                color = (50, 50, 50)  # dark gray
+                title_y = frame_height // 6  # 1/6th from the top
+                # Actual (left)
+                cv2.putText(
+                    combined_image,
+                    "Actual",
+                    (half_width // 2 - 40, title_y),
+                    font,
+                    font_scale_title,
+                    color,
+                    font_thickness,
+                    cv2.LINE_AA,
+                )
+                # Predicted (right)
+                cv2.putText(
+                    combined_image,
+                    "Predicted",
+                    (half_width + half_width // 2 - 55, title_y),
+                    font,
+                    font_scale_title,
+                    color,
+                    font_thickness,
+                    cv2.LINE_AA,
+                )
+                # Draw action arrow and value in the center near the bottom of the screen
+                bottom_margin = 40
+                arrow_y = frame_height - bottom_margin
+                center_x = frame_width // 2
+                # Use the action from this step (if available)
+                if step_idx < len(self.actions[episode_idx]):
+                    action = self.actions[episode_idx][step_idx]
+                    if hasattr(action, "__len__") and len(action) > 0:
+                        action_val = float(action[0])
+                    else:
+                        action_val = float(action)
+                    # Draw arrow
+                    arrow_length = int(40 + 60 * abs(action_val))
+                    arrow_color = (0, 255, 255)  # Yellow (BGR)
+                    arrow_thickness = 4
+                    if action_val >= 0:
+                        tip_x = center_x + arrow_length
+                    else:
+                        tip_x = center_x - arrow_length
+                    tip_y = arrow_y
+                    cv2.arrowedLine(
+                        combined_image,
+                        (center_x, arrow_y),
+                        (tip_x, tip_y),
+                        arrow_color,
+                        arrow_thickness,
+                        tipLength=0.3,
+                    )
+                    # Action value text in yellow
+                    cv2.putText(
+                        combined_image,
+                        f"Action: {action_val:.2f}",
+                        (center_x - 60, arrow_y + 30),
+                        font,
+                        0.7,
+                        (0, 255, 255),
+                        2,
+                    )
+
+                # Draw reward bars on left (actual) and right (predicted)
+                bar_max_height = int(frame_height * 0.8)
+                bar_width = 20
+                bar_margin_top = int(frame_height * 0.1)
+                # Get actual and predicted reward for this step
+                actual_reward = 0.0
+                predicted_reward = 0.0
+                if step_idx < len(self.actual_rewards[episode_idx]):
+                    actual_reward = float(self.actual_rewards[episode_idx][step_idx])
+                if step_idx < len(self.predicted_rewards[episode_idx]):
+                    predicted_reward = float(
+                        self.predicted_rewards[episode_idx][step_idx]
+                    )
+                # Clamp rewards to [0, 1]
+                actual_reward = max(0.0, min(1.0, actual_reward))
+                predicted_reward = max(0.0, min(1.0, predicted_reward))
+                # Actual reward bar (left)
+                bar_x_actual = 10
+                bar_y_bottom = bar_margin_top + bar_max_height
+                bar_y_top_actual = bar_y_bottom - int(bar_max_height * actual_reward)
+                # Draw background
+                cv2.rectangle(
+                    combined_image,
+                    (bar_x_actual, bar_margin_top),
+                    (bar_x_actual + bar_width, bar_margin_top + bar_max_height),
+                    (180, 180, 180),  # gray
+                    -1,
+                )
+                # Draw filled value
+                cv2.rectangle(
+                    combined_image,
+                    (bar_x_actual, bar_y_top_actual),
+                    (bar_x_actual + bar_width, bar_y_bottom),
+                    (0, 220, 0),  # green
+                    -1,
+                )
+                # Label
+                cv2.putText(
+                    combined_image,
+                    "Actual Reward",
+                    (bar_x_actual - 10, bar_margin_top - 10),
+                    font,
+                    0.5,
+                    (0, 120, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+                # Predicted reward bar (right)
+                bar_x_pred = frame_width - bar_width - 10
+                bar_y_top_pred = bar_y_bottom - int(bar_max_height * predicted_reward)
+                # Draw background
+                cv2.rectangle(
+                    combined_image,
+                    (bar_x_pred, bar_margin_top),
+                    (bar_x_pred + bar_width, bar_margin_top + bar_max_height),
+                    (180, 180, 180),  # gray
+                    -1,
+                )
+                # Draw filled value
+                cv2.rectangle(
+                    combined_image,
+                    (bar_x_pred, bar_y_top_pred),
+                    (bar_x_pred + bar_width, bar_y_bottom),
+                    (0, 220, 0),  # green
+                    -1,
+                )
+                # Label
+                cv2.putText(
+                    combined_image,
+                    "Pred. Reward",
+                    (bar_x_pred - 10, bar_margin_top - 10),
+                    font,
+                    0.5,
+                    (0, 120, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+                combined_frames.append(combined_image)
+
+            # Save a single combined image for the episode (last frame)
+            if combined_frames:
                 combined_path = os.path.join(
                     episode_dir, f"combined_episode_{episode_idx + 1}.png"
                 )
                 result = cv2.imwrite(
-                    combined_path, cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR)
+                    combined_path, cv2.cvtColor(combined_frames[-1], cv2.COLOR_RGB2BGR)
                 )
                 print(f"[DEBUG] Combined image saved: {combined_path}, result={result}")
 
+            # --- Create video from combined frames ---
+            if combined_frames:
+                video_path = os.path.join(
+                    episode_dir, f"combined_episode_{episode_idx + 1}.mp4"
+                )
+                height, width, _ = combined_frames[0].shape
+                fps = 30
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+                for frame in combined_frames:
+                    # Ensure frame is uint8 and RGB
+                    if frame.dtype != np.uint8:
+                        frame = frame.astype(np.uint8)
+                    # OpenCV expects BGR
+                    video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                video_writer.release()
+                print(f"[DEBUG] Combined video saved: {video_path}")
         print(f"Frames saved to: {frames_dir}")
 
     def test_sequence_prediction(self):
