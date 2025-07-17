@@ -131,11 +131,12 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                 else:
                     state_obs = np.array(state)
 
+                scaled_state_obs = state_obs.copy()
                 if (
                     state_scaler is not None
                     and not config["world_model_trainer"]["use_output_state_scaler"]
                 ):
-                    scaled_state_obs = state_scaler.transform(state_obs)
+                    scaled_state_obs = state_scaler.transform(scaled_state_obs)
                 action, _ = actor_model.predict(scaled_state_obs, deterministic=False)
             except Exception as e:
                 print(f"Error processing state observation: {e}")
