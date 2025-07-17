@@ -378,8 +378,9 @@ class WorldModelWrapper(DummyVecEnv):
         remove_from_replay_buffer=False,
     ):
         if seed is not None:
-            super().seed(seed)
-            torch.manual_seed(seed)
+            if type(seed) == int:
+                super().seed(seed)
+                torch.manual_seed(seed)
 
         # It's possible to be reset before the first model is loaded and has a valid init state
         if self.nn_model is not None and self.nn_model.valid_init_state is not None:

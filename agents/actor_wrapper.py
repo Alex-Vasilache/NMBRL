@@ -117,6 +117,14 @@ class ActorWrapper:
                     self.env,
                     tensorboard_log=self.tb_log_dir,
                 )
+            elif self.agent_type == "EVO":
+                from agents.evo_agent import EvoAgent
+
+                self.model = EvoAgent(
+                    self.config,
+                    self.env,
+                    tensorboard_log=self.tb_log_dir,
+                )
             else:
                 raise ValueError(f"Unknown agent type: {self.agent_type}")
 
@@ -181,6 +189,11 @@ class ActorWrapper:
                     from agents.dreamer_ac_agent import DreamerACAgent
 
                     new_model = DreamerACAgent.load(new_model_path, env=self.env)
+
+                elif self.agent_type == "EVO":
+                    from agents.evo_agent import EvoAgent
+
+                    new_model = EvoAgent.load(new_model_path, env=self.env)
                 else:
                     print(
                         f"[ACTOR-WRAPPER] Unknown agent type {self.agent_type}, cannot load model."

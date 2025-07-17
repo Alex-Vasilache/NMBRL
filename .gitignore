@@ -22,3 +22,4 @@ runs*
 *.pkl
 full_system_run*
 completed_runs/*
+output/*

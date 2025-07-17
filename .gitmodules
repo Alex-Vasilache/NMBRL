@@ -4,3 +4,6 @@
 [submodule "environments/physical-cartpole"]
 	path = environments/physical-cartpole
 	url = https://github.com/SensorsINI/physical-cartpole.git
+[submodule "Spatial-SNNs"]
+	path = Spatial-SNNs
+	url = https://github.com/Alex-Vasilache/Spatial-SNNs.git
