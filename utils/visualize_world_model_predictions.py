@@ -18,7 +18,7 @@ import time
 import cv2
 
 TARGET_HEIGHT, TARGET_WIDTH = 270, 360
-FPS = 30
+FPS = 20
 
 # Set DMC render resolution before importing DMCWrapper
 os.environ["DMC_RENDER_WIDTH"] = str(TARGET_WIDTH)  # or 720 for high-res
@@ -700,10 +700,11 @@ class WorldModelVisualizer:
         print(f"All plots saved to: {save_dir}")
 
     def _plot_states_comparison(self, save_dir: str):
-        """Plot actual vs predicted states over time."""
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle("State Comparison: Actual vs Predicted", fontsize=16)
+        """Plot actual vs predicted states over time, combined across all episodes."""
+        import matplotlib.pyplot as plt
 
+        all_actual = np.concatenate(self.actual_states, axis=0)
+        all_predicted = np.concatenate(self.predicted_states, axis=0)
         state_names = [
             "Cart Position",
             "Angle Cos",
@@ -712,86 +713,74 @@ class WorldModelVisualizer:
             "Angle Velocity",
             "Angle",
         ]
-
-        for episode_idx in range(
-            min(len(self.actual_states), 2)
-        ):  # Plot first 2 episodes
-            actual_states = self.actual_states[episode_idx]
-            angle = np.arctan2(actual_states[:, 2], actual_states[:, 1]).reshape(-1, 1)
-            actual_states = np.append(actual_states, angle, axis=1)
-
-            predicted_states = self.predicted_states[episode_idx]
-            angle = np.arctan2(predicted_states[:, 2], predicted_states[:, 1]).reshape(
-                -1, 1
+        # Add angle as a derived state
+        angle_actual = np.arctan2(all_actual[:, 2], all_actual[:, 1]).reshape(-1, 1)
+        actual_states = np.append(all_actual, angle_actual, axis=1)
+        angle_pred = np.arctan2(all_predicted[:, 2], all_predicted[:, 1]).reshape(-1, 1)
+        predicted_states = np.append(all_predicted, angle_pred, axis=1)
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle(
+            "State Comparison: Actual vs Predicted (All Episodes Combined)", fontsize=16
+        )
+        # Compute episode boundaries
+        episode_lengths = [len(a) for a in self.actual_states]
+        boundaries = np.cumsum(episode_lengths)[:-1]
+        time_steps = np.arange(len(actual_states))
+        for state_idx in range(min(6, actual_states.shape[1])):
+            row = state_idx // 3
+            col = state_idx % 3
+            ax = axes[row, col]
+            ax.plot(
+                time_steps,
+                actual_states[:, state_idx],
+                "b-",
+                label="Actual",
+                linewidth=2,
             )
-            predicted_states = np.append(predicted_states, angle, axis=1)
-
-            for state_idx in range(min(6, actual_states.shape[1])):
-                row = episode_idx
-                col = state_idx
-
-                if col < 3:  # First row
-                    ax = axes[0, col]
-                else:  # Second row
-                    ax = axes[1, col - 3]
-
-                time_steps = np.arange(len(actual_states))
-                ax.plot(
-                    time_steps,
-                    actual_states[:, state_idx],
-                    "b-",
-                    label="Actual",
-                    linewidth=2,
-                )
-                ax.plot(
-                    time_steps,
-                    predicted_states[:, state_idx],
-                    "r--",
-                    label="Predicted",
-                    linewidth=2,
-                )
-                ax.set_title(f"{state_names[state_idx]} (Episode {episode_idx + 1})")
-                ax.set_xlabel("Time Step")
-                ax.set_ylabel("State Value")
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-
+            ax.plot(
+                time_steps,
+                predicted_states[:, state_idx],
+                "r--",
+                label="Predicted",
+                linewidth=2,
+            )
+            for b in boundaries:
+                ax.axvline(b, color="k", linestyle=":", alpha=0.5)
+            ax.set_title(state_names[state_idx])
+            ax.set_xlabel("Global Time Step")
+            ax.set_ylabel("State Value")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(
-            os.path.join(save_dir, "state_comparison.png"), dpi=300, bbox_inches="tight"
+            os.path.join(save_dir, "state_comparison_combined.png"),
+            dpi=300,
+            bbox_inches="tight",
         )
         plt.close()
 
     def _plot_rewards_comparison(self, save_dir: str):
-        """Plot actual vs predicted rewards over time."""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle("Reward Comparison: Actual vs Predicted", fontsize=16)
+        """Plot actual vs predicted rewards over time, combined across all episodes."""
+        import matplotlib.pyplot as plt
 
-        for episode_idx in range(min(len(self.actual_rewards), 4)):
-            row = episode_idx // 2
-            col = episode_idx % 2
-
-            actual_rewards = self.actual_rewards[episode_idx]
-            predicted_rewards = self.predicted_rewards[episode_idx]
-
-            time_steps = np.arange(len(actual_rewards))
-
-            # Individual rewards
-            axes[row, col].plot(
-                time_steps, actual_rewards, "b-", label="Actual", linewidth=2
-            )
-            axes[row, col].plot(
-                time_steps, predicted_rewards, "r--", label="Predicted", linewidth=2
-            )
-            axes[row, col].set_title(f"Episode {episode_idx + 1}")
-            axes[row, col].set_xlabel("Time Step")
-            axes[row, col].set_ylabel("Reward")
-            axes[row, col].legend()
-            axes[row, col].grid(True, alpha=0.3)
-
+        all_actual = np.concatenate(self.actual_rewards, axis=0)
+        all_predicted = np.concatenate(self.predicted_rewards, axis=0)
+        episode_lengths = [len(a) for a in self.actual_rewards]
+        boundaries = np.cumsum(episode_lengths)[:-1]
+        time_steps = np.arange(len(all_actual))
+        fig, ax = plt.subplots(figsize=(15, 5))
+        ax.plot(time_steps, all_actual, "b-", label="Actual", linewidth=2)
+        ax.plot(time_steps, all_predicted, "r--", label="Predicted", linewidth=2)
+        for b in boundaries:
+            ax.axvline(b, color="k", linestyle=":", alpha=0.5)
+        ax.set_title("Reward Comparison: Actual vs Predicted (All Episodes Combined)")
+        ax.set_xlabel("Global Time Step")
+        ax.set_ylabel("Reward")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(
-            os.path.join(save_dir, "reward_comparison.png"),
+            os.path.join(save_dir, "reward_comparison_combined.png"),
             dpi=300,
             bbox_inches="tight",
         )
@@ -1194,7 +1183,7 @@ class WorldModelVisualizer:
 
             all_combined_frames.extend(combined_frames)
             # Add 0.5s (15 frames at 30 fps) of black frames between episodes, except after the last
-            pause_seconds = 0.5
+            pause_seconds = 0.75
             if episode_idx < len(self.frames_actual) - 1 and combined_frames:
                 black_frame = np.zeros_like(combined_frames[0])
                 all_combined_frames.extend([black_frame] * int(pause_seconds * FPS))
