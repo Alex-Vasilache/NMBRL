@@ -2,6 +2,7 @@ import os
 import threading
 import numpy as np
 from stable_baselines3.common.callbacks import CallbackList
+import joblib
 
 MAX_ACTION_CHANGE = 0.4
 MAX_ACTION_SCALE = 0.7
@@ -78,6 +79,7 @@ class ActorWrapper:
         self.training = training
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
+        self.state_scaler = None
 
         if not self.training:
             self.model = RandomPolicy(self.env.action_space)
@@ -201,10 +203,31 @@ class ActorWrapper:
                     return
                 print("[ACTOR-WRAPPER] Successfully loaded new actor.")
 
+                # check if action scaler exists
+                if not os.path.exists(
+                    os.path.join(
+                        os.path.dirname(os.path.dirname(new_model_path)),
+                        "state_scaler.joblib",
+                    )
+                ):
+                    print(
+                        f"[ACTOR-WRAPPER] State scaler not found in {new_model_path}. Using default scaler. This is normal for old models."
+                    )
+                    state_scaler = None
+                else:
+                    # search for state scaler
+                    state_scaler = joblib.load(
+                        os.path.join(
+                            os.path.dirname(os.path.dirname(new_model_path)),
+                            "state_scaler.joblib",
+                        )
+                    )
+
                 # Safely update the shared actor and environment
                 with self.lock:
                     self.model = new_model
                     self.latest_model_path = new_model_path
+                    self.state_scaler = state_scaler
 
         except Exception as e:
             print(f"[ACTOR-WRAPPER] Error loading actor: {e}. Using previous actor.")
@@ -218,7 +241,7 @@ class ActorWrapper:
     def get_model(self):
         """Returns the current model in a thread-safe way."""
         with self.lock:
-            return self.model
+            return self.model, self.state_scaler
 
     def close(self):
         """Stops the background model watcher thread."""

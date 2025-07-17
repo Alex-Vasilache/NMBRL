@@ -28,7 +28,7 @@ data_generator:
 world_model_trainer:
   max_valid_init_buffer_size: 1000000  # Adjust as needed
   # Training trigger settings
-  new_data_threshold: 100
+  new_data_threshold: 2000
   watcher_interval_seconds: 1
   # Model architecture
   hidden_dim: 1024
@@ -48,14 +48,14 @@ world_model_trainer:
   model_type: "rnn" # "mlp" or "rnn"
   num_layers: 4
   dropout: 0.3
-  context_length: 5   # Number of context frames given to the model
-  prediction_length: 45 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
+  context_length: 1   # Number of context frames given to the model
+  prediction_length: 15 # Number of future frames to predict (context_length + prediction_length = imag_horizon)
 
 # Configuration for learning/dynamic_train_agent_sb3.py
 agent_trainer:
   agent_type: "EVO" # "PPO" or "SAC" or "DREAMER" or "EVO"
   # Environment settings
-  n_envs: 16
+  n_envs: 16000
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -88,18 +88,18 @@ evo_agent_trainer:
   environment:
     game_name: "CartPole-v1"  # Gymnasium environment name (e.g., 'CartPole-v1', 'Hopper-v4', 'Ant-v4')
     visualization: true  # Enable real-time visualization of agent performance during training/testing
-    max_env_steps: 500  # Maximum number of environment steps per episode before automatic reset
+    max_env_steps: 15  # Maximum number of environment steps per episode before automatic reset
     discretize_intervals: 0  # For continuous action spaces: number of discrete intervals per action dimension. Set to 0 or 1 to keep actions continuous
 
   # =================================================================
   # NETWORK ARCHITECTURE
   # =================================================================
   network:
-    net_size: [3, 3, 1]  # 3D grid dimensions for hidden layer neurons: [width, height, depth]. Total hidden neurons = width × height × depth
+    net_size: [4, 4, 1]  # 3D grid dimensions for hidden layer neurons: [width, height, depth]. Total hidden neurons = width × height × depth
     spike_steps: 4  # Number of SNN simulation timesteps per environment step (higher = more temporal dynamics)
     max_vthr: 1000  # Maximum membrane potential threshold for LIF neurons (controls spiking sensitivity)
     spatial: true  # Enable spatial embedding: connection probabilities decay with distance in 3D space
-    prune_unconnected: true  # Remove isolated neurons and disconnected subgraphs to improve efficiency
+    prune_unconnected: false  # Remove isolated neurons and disconnected subgraphs to improve efficiency
 
   # =================================================================
   # EVOLUTIONARY ALGORITHM PARAMETERS
@@ -121,8 +121,8 @@ evo_agent_trainer:
   # =================================================================
   training:
     batch_size_gene: 16  # Number of network configurations to evaluate in parallel on GPU (memory permitting)
-    num_data_samples: 1  # Total number of evaluation episodes per network (higher = more reliable fitness estimate)
-    batch_size_data: 1  # Number of parallel environments to run simultaneously per network evaluation
+    num_data_samples: 1000  # Total number of evaluation episodes per network (higher = more reliable fitness estimate)
+    batch_size_data: 1000  # Number of parallel environments to run simultaneously per network evaluation
     curiculum_learning: false  # Gradually increase episode length by 1.1x every generation for progressive difficulty. Capped at 1000 steps. 
 
 # Configuration for learning/dynamic_train_agent_dreamer.py

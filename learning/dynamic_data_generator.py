@@ -114,7 +114,7 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                 continue
 
             # Get the latest actor and environment from the wrapper
-            actor_model = actor_wrapper.get_model()
+            actor_model, state_scaler = actor_wrapper.get_model()
 
             # Extract state from vectorized environment (first and only environment)
             # For single environment, handle vectorized environment observation format
@@ -130,6 +130,12 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                     state_obs = state
                 else:
                     state_obs = np.array(state)
+
+                if (
+                    state_scaler is not None
+                    and not config["world_model_trainer"]["use_output_state_scaler"]
+                ):
+                    state_obs = state_scaler.transform(state_obs)
 
                 action, _ = actor_model.predict(state_obs, deterministic=False)
             except Exception as e:

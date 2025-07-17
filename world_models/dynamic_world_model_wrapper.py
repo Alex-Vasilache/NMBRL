@@ -382,7 +382,72 @@ class WorldModelWrapper(DummyVecEnv):
                 super().seed(seed)
                 torch.manual_seed(seed)
 
-        # It's possible to be reset before the first model is loaded and has a valid init state
+        if seed is not None and type(seed) == list:
+            # list is something like [0,0,0,100,100,100,200,200,200]
+            num_unique_seeds = len(set(seed))  # this would be 3
+
+            if self.nn_model is not None and self.nn_model.valid_init_state is not None:
+                valid_init_state_size = self.nn_model.valid_init_state.shape[0]
+
+                # Split unique seeds into two halves
+                half_unique_seeds = num_unique_seeds // 2
+                remaining_unique_seeds = num_unique_seeds - half_unique_seeds
+
+                # Get latest 1000 from buffer for first half
+                latest_start_idx = max(0, valid_init_state_size - 1000)
+                latest_buffer_size = valid_init_state_size - latest_start_idx
+
+                if latest_buffer_size >= half_unique_seeds:
+                    latest_indices = np.random.choice(
+                        np.arange(latest_start_idx, valid_init_state_size),
+                        half_unique_seeds,
+                        replace=False,
+                    )
+                else:
+                    # If latest 1000 is smaller than needed, use all of it and pad with random
+                    latest_indices = np.arange(latest_start_idx, valid_init_state_size)
+                    needed = half_unique_seeds - len(latest_indices)
+                    random_padding = np.random.choice(
+                        valid_init_state_size, needed, replace=False
+                    )
+                    latest_indices = np.concatenate([latest_indices, random_padding])
+
+                # Get remaining seeds from rest of buffer
+                if latest_start_idx > 0:
+                    rest_indices = np.random.choice(
+                        latest_start_idx, remaining_unique_seeds, replace=False
+                    )
+                else:
+                    # If buffer is smaller than 1000, get remaining from entire buffer
+                    rest_indices = np.random.choice(
+                        valid_init_state_size, remaining_unique_seeds, replace=False
+                    )
+
+                # Combine indices
+                selected_indices = np.concatenate([latest_indices, rest_indices])
+                selected_states = self.nn_model.valid_init_state[selected_indices]
+
+                # Map the selected states to the original number of seeds
+                unique_seeds = list(set(seed))
+                seed_to_state = dict(zip(unique_seeds, selected_states))
+                return_states = torch.stack([seed_to_state[s] for s in seed])
+                self.state = return_states
+
+                device = resolve_device("global", self.config["global"])
+
+                if isinstance(self.state, torch.Tensor):
+                    self.state = self.state.to(device)
+                else:
+                    self.state = torch.from_numpy(self.state).float().to(device)
+
+                if (
+                    self.use_scalers and not self.use_output_state_scaler
+                ):  # scale original range to [-3, 3]
+                    self.step_count = 0
+                    return (
+                        self.nn_model._do_scale(self.state, STATE_SCALER).cpu().numpy()
+                    )
+
         if self.nn_model is not None and self.nn_model.valid_init_state is not None:
             buffer_size = self.nn_model.valid_init_state.shape[0]
             half_envs = self.num_envs // 2

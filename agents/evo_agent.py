@@ -25,7 +25,6 @@ from util.config_loader import map_config_to_args
 from util.args import dotdict
 from src.search.evolution import Evolution
 import numpy as np
-from util.data import save_weights, load_checkpoint
 from util.training import ProgressBar
 
 
@@ -277,15 +276,6 @@ class EvoAgent:
         train_log = []
         test_log = []
 
-        save_weights(
-            self.search_dist,
-            (test_elites, test_scores, test_ftdesc),
-            self.data_path,
-            self.info,
-            train_log,
-            test_log,
-        )
-
         test_args = dotdict(self.args.copy())
         test_args.test = True
         test_args.random_seed = 99
@@ -334,16 +324,8 @@ class EvoAgent:
                     formatter={"float_kind": lambda x: "%4.0f" % x},
                 )
 
-            save_weights(
-                self.search_dist,
-                (test_elites, test_scores, test_ftdesc),
-                self.data_path,
-                self.info,
-                train_log,
-                test_log,
-            )
-
-            self.save_models(iteration)
+            if (iteration + 1) % 10 == 0 and iteration != 0:
+                self.save_models(iteration)
 
             # --- Curriculum Learning ---
             if (
