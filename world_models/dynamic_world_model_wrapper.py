@@ -189,19 +189,49 @@ class WorldModelWrapper(DummyVecEnv):
                 # Wait briefly to prevent loading a partially written file
                 time.sleep(0.5)
 
-                # new_model = self._create_model_instance()
-                # Load onto resolved device based on global configuration
-                # new_model.load_state_dict(
-                #     torch.load(self.model_path, map_location="cpu")
-                # )
                 torch.serialization.add_safe_globals([SimpleModel])
                 device = resolve_device("global", self.config["global"])
-                new_model = load_model(
-                    self.model_path,
-                    with_scalers=self.use_scalers,
-                    map_location=device,
-                    weights_only=False,
+                # Patch: If use_scalers is True but use_existing_scalers is False and scalers are missing, load without scalers
+                use_existing_scalers = self.config["global"].get(
+                    "use_existing_scalers", True
                 )
+                scaler_files_exist = all(
+                    [
+                        os.path.exists(os.path.join(self.shared_folder, f))
+                        for f in [
+                            "state_scaler.joblib",
+                            "action_scaler.joblib",
+                            "reward_scaler.joblib",
+                        ]
+                    ]
+                )
+                try:
+                    if (
+                        self.use_scalers
+                        and (not scaler_files_exist)
+                        and (not use_existing_scalers)
+                    ):
+                        print(
+                            f"[{datetime.now()}] Scaler files missing and use_existing_scalers is False. Loading model without scalers."
+                        )
+                        new_model = load_model(
+                            self.model_path,
+                            with_scalers=False,
+                            map_location=device,
+                            weights_only=False,
+                        )
+                        if hasattr(new_model, "set_scalers"):
+                            new_model.set_scalers(None, None, None)
+                    else:
+                        new_model = load_model(
+                            self.model_path,
+                            with_scalers=self.use_scalers,
+                            map_location=device,
+                            weights_only=False,
+                        )
+                except Exception as e:
+                    print(f"Error loading model {self.model_path}: {e}")
+                    return False
                 # Ensure the model is properly moved to the target device
                 new_model = new_model.to(device)
                 new_model.eval()  # Set to evaluation mode
@@ -500,12 +530,15 @@ class WorldModelWrapper(DummyVecEnv):
                 self.step_count = 0
                 return self.nn_model._do_scale(self.state, STATE_SCALER).cpu().numpy()
         else:
-            # Fallback to a random state if the model or its buffer isn't ready
+            # Fallback to a batch of random states if the model or its buffer isn't ready
             device = resolve_device("global", self.config["global"])
             self.state = (
-                torch.from_numpy(self.observation_space.sample())
+                torch.from_numpy(
+                    np.stack(
+                        [self.observation_space.sample() for _ in range(self.num_envs)]
+                    )
+                )
                 .float()
-                .unsqueeze(0)
                 .to(device)
             )
             # print(

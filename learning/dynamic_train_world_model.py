@@ -151,24 +151,32 @@ def train_model(
 
                 # save scalers
                 if model_save_path is not None:
-                    joblib.dump(
-                        state_scaler,
-                        os.path.join(
-                            os.path.dirname(model_save_path), "state_scaler.joblib"
-                        ),
-                    )
-                    joblib.dump(
-                        action_scaler,
-                        os.path.join(
-                            os.path.dirname(model_save_path), "action_scaler.joblib"
-                        ),
-                    )
-                    joblib.dump(
-                        reward_scaler,
-                        os.path.join(
-                            os.path.dirname(model_save_path), "reward_scaler.joblib"
-                        ),
-                    )
+                    scaler_dir = os.path.dirname(model_save_path)
+                    try:
+                        print(
+                            f"[TRAINER-DEBUG] Saving state_scaler to {os.path.join(scaler_dir, 'state_scaler.joblib')}"
+                        )
+                        joblib.dump(
+                            state_scaler,
+                            os.path.join(scaler_dir, "state_scaler.joblib"),
+                        )
+                        print(
+                            f"[TRAINER-DEBUG] Saving action_scaler to {os.path.join(scaler_dir, 'action_scaler.joblib')}"
+                        )
+                        joblib.dump(
+                            action_scaler,
+                            os.path.join(scaler_dir, "action_scaler.joblib"),
+                        )
+                        print(
+                            f"[TRAINER-DEBUG] Saving reward_scaler to {os.path.join(scaler_dir, 'reward_scaler.joblib')}"
+                        )
+                        joblib.dump(
+                            reward_scaler,
+                            os.path.join(scaler_dir, "reward_scaler.joblib"),
+                        )
+                        print(f"[TRAINER-DEBUG] All scalers saved successfully.")
+                    except Exception as e:
+                        print(f"[TRAINER-ERROR] Failed to save scaler(s): {e}")
 
     # Unpack dataset
     X, y = dataset
@@ -649,23 +657,34 @@ def main():
     # Check if we should load from a checkpoint
     if os.path.exists(model_save_path):
         print(f"[TRAINER] Loading existing model from checkpoint: {model_save_path}")
+        use_existing_scalers = config["global"].get("use_existing_scalers", True)
         try:
-            model = torch.load(
-                model_save_path,
-                map_location=next(model.parameters()).device,
-                weights_only=False,
-            )
-            print("[TRAINER] Successfully loaded model from checkpoint")
-
-            # Check if we should use existing scalers
-            use_existing_scalers = config["global"].get("use_existing_scalers", True)
             if use_existing_scalers:
+                model = torch.load(
+                    model_save_path,
+                    map_location=next(model.parameters()).device,
+                    weights_only=False,
+                )
+                print(
+                    "[TRAINER] Successfully loaded model from checkpoint (with scalers)"
+                )
                 print("[TRAINER] Loading existing scalers from checkpoint")
                 # The scalers will be loaded by the model loading process
                 # since they are saved with the model
             else:
+                # Load model without requiring scalers
+                model = torch.load(
+                    model_save_path,
+                    map_location=next(model.parameters()).device,
+                    weights_only=False,
+                )
+                # Remove any scaler attributes if present
+                if hasattr(model, "set_scalers"):
+                    model.set_scalers(None, None, None)
+                print(
+                    "[TRAINER] Successfully loaded model from checkpoint (without scalers)"
+                )
                 print("[TRAINER] Will create new scalers (use_existing_scalers=False)")
-
         except Exception as e:
             print(f"[TRAINER] Warning: Failed to load model from checkpoint: {e}")
             print("[TRAINER] Starting with fresh model")

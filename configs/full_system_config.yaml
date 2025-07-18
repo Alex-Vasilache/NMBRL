@@ -38,12 +38,12 @@ world_model_trainer:
   new_data_threshold: 1000
   watcher_interval_seconds: 1
   # Model architecture
-  hidden_dim: 32
+  hidden_dim: 1024
   # Training parameters
   buffer_policy: "oldest_n" # "latest" or "random", "oldest_n"
   batch_size: "all" # "all" or an integer value
   epochs_per_cycle: 10000
-  learning_rate: 0.0004
+  learning_rate: 0.00004
   validation_split: 0.2
   # Learning rate scheduler settings
   lr_patience: 5
@@ -62,7 +62,7 @@ world_model_trainer:
 agent_trainer:
   agent_type: "DREAMER" # "PPO" or "SAC" or "DREAMER" or "EVO"
   # Environment settings
-  n_envs: 16
+  n_envs: 128
   max_episode_steps: 16
   # Training run settings
   total_timesteps: 10000000
@@ -136,8 +136,8 @@ evo_agent_trainer:
 dreamer_agent_trainer:
   # Training
   num_epochs: 1000000
-  batch_size: 16
-  learning_rate: 4e-4
+  batch_size: 128
+  learning_rate: 3e-5
   eps: 1e-5
   grad_clip: 1.0 # try 1.0
   reward_EMA: True
@@ -153,7 +153,7 @@ dreamer_agent_trainer:
     # Model
   act: 'SiLU'             # Activation function
   norm: True              # Layer Normalization
-  units: 32               # Number of neurons in each layer # todo 32-64
+  units: 512               # Number of neurons in each layer # todo 32-64
 
   # Logging
   save_frequency: 100  # Save models every N episodes (None to disable)
@@ -166,7 +166,7 @@ dreamer_agent_trainer:
 
   # Actor
   actor:
-    layers: 2 # todo 2
+    layers: 4 # todo 2
     dist: 'normal' # maybe TanhBijector or tanh_normal
     entropy: 3e-4
     unimix_ratio: 0.01
@@ -179,7 +179,7 @@ dreamer_agent_trainer:
 
   # Critic
   critic:
-    layers: 2 # todo 2
+    layers: 4 # todo 2
     dist: 'symlog_disc'
     outscale: 0.0
     slow_target: True

@@ -223,13 +223,21 @@ def run_system():
                 import torch
 
                 try:
-                    model = torch.load(model_path, map_location="cpu")
+                    torch.serialization.add_safe_globals(
+                        []
+                    )  # allow all globals for safety
+                    model = torch.load(
+                        model_path, map_location="cpu", weights_only=False
+                    )
                     if hasattr(model, "valid_init_state"):
                         model.valid_init_state = None
-                        torch.save(model, model_path)
                         print(
                             "--- Cleared valid_init_state in loaded world model (model.pth) ---"
                         )
+                    torch.save(model, model_path)
+                    print(
+                        "--- Saved model with cleared valid_init_state back to disk ---"
+                    )
                 except Exception as e:
                     print(
                         f"--- Warning: Could not clear valid_init_state in world model: {e}"
