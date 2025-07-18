@@ -97,11 +97,124 @@ def run_system():
     run_config = config["run_system"]
     create_new_consoles = run_config.get("create_new_consoles", True)
 
-    # 1. Create unique folder for the run
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    shared_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
-    os.makedirs(shared_folder, exist_ok=True)
-    print(f"--- Created unique folder for this run: {shared_folder} ---")
+    # Check if we should load from a checkpoint
+    checkpoint_path = config["global"].get("checkpoint_path")
+    if checkpoint_path:
+        print(f"--- Loading from checkpoint: {checkpoint_path} ---")
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(
+                f"Checkpoint path does not exist: {checkpoint_path}"
+            )
+
+        # Copy checkpoint files to new run folder
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        shared_folder = os.path.join(
+            config["global"]["run_folder_prefix"], f"{timestamp}_from_checkpoint"
+        )
+        os.makedirs(shared_folder, exist_ok=True)
+        print(f"--- Created new run folder from checkpoint: {shared_folder} ---")
+
+        # Copy relevant files from checkpoint to new folder
+        import shutil
+
+        checkpoint_files_to_copy = ["model.pth", "buffer.pkl"]
+        for file_name in checkpoint_files_to_copy:
+            src_path = os.path.join(checkpoint_path, file_name)
+            dst_path = os.path.join(shared_folder, file_name)
+            if os.path.exists(src_path):
+                shutil.copy2(src_path, dst_path)
+                print(f"--- Copied {file_name} from checkpoint ---")
+
+        # Copy scaler files if use_existing_scalers is True
+        use_existing_scalers = config["global"].get("use_existing_scalers", True)
+        if use_existing_scalers:
+            scaler_files = [
+                "state_scaler.joblib",
+                "action_scaler.joblib",
+                "reward_scaler.joblib",
+            ]
+            for scaler_file in scaler_files:
+                src_path = os.path.join(checkpoint_path, scaler_file)
+                dst_path = os.path.join(shared_folder, scaler_file)
+                if os.path.exists(src_path):
+                    shutil.copy2(src_path, dst_path)
+                    print(f"--- Copied {scaler_file} from checkpoint ---")
+                else:
+                    print(f"--- Warning: {scaler_file} not found in checkpoint ---")
+        else:
+            print("--- Skipping scaler files (use_existing_scalers=False) ---")
+
+        # Copy agent models if they exist
+        checkpoint_agent_dir = os.path.join(checkpoint_path, "actor_models")
+        if os.path.exists(checkpoint_agent_dir):
+            dst_agent_dir = os.path.join(shared_folder, "actor_models")
+            shutil.copytree(checkpoint_agent_dir, dst_agent_dir, dirs_exist_ok=True)
+            print(f"--- Copied agent models from checkpoint ---")
+
+        # Copy actor logs (contains checkpoints) if they exist
+        checkpoint_actor_logs_dir = os.path.join(checkpoint_path, "actor_logs")
+        if os.path.exists(checkpoint_actor_logs_dir):
+            dst_actor_logs_dir = os.path.join(shared_folder, "actor_logs")
+            shutil.copytree(
+                checkpoint_actor_logs_dir, dst_actor_logs_dir, dirs_exist_ok=True
+            )
+            print(f"--- Copied actor logs from checkpoint ---")
+
+        # Copy any other potential actor checkpoint directories
+        actor_checkpoint_dirs = [
+            "actor_checkpoints",
+            "checkpoints",
+            "models",
+            "saved_models",
+        ]
+
+        for checkpoint_dir_name in actor_checkpoint_dirs:
+            src_checkpoint_dir = os.path.join(checkpoint_path, checkpoint_dir_name)
+            if os.path.exists(src_checkpoint_dir):
+                dst_checkpoint_dir = os.path.join(shared_folder, checkpoint_dir_name)
+
+                # If this is the checkpoints directory, prefer CPU models
+                if checkpoint_dir_name == "checkpoints":
+                    # Copy the directory first
+                    shutil.copytree(
+                        src_checkpoint_dir, dst_checkpoint_dir, dirs_exist_ok=True
+                    )
+
+                    # Rename copied checkpoints to have very low alphabetical names
+                    # so they don't interfere with newly created checkpoints
+                    if os.path.exists(dst_checkpoint_dir):
+                        for filename in os.listdir(dst_checkpoint_dir):
+                            if filename.endswith(".zip"):
+                                old_path = os.path.join(dst_checkpoint_dir, filename)
+                                # Add "old_" prefix to make it alphabetically lower
+                                new_filename = f"old_{filename}"
+                                new_path = os.path.join(
+                                    dst_checkpoint_dir, new_filename
+                                )
+                                try:
+                                    os.rename(old_path, new_path)
+                                    print(
+                                        f"--- Renamed {filename} to {new_filename} ---"
+                                    )
+                                except Exception as e:
+                                    print(
+                                        f"--- Warning: Could not rename {filename}: {e} ---"
+                                    )
+
+                else:
+                    # For other directories, just copy as usual
+                    shutil.copytree(
+                        src_checkpoint_dir, dst_checkpoint_dir, dirs_exist_ok=True
+                    )
+
+                print(f"--- Copied {checkpoint_dir_name} from checkpoint ---")
+
+    else:
+        # 1. Create unique folder for the run
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        shared_folder = os.path.join(config["global"]["run_folder_prefix"], timestamp)
+        os.makedirs(shared_folder, exist_ok=True)
+        print(f"--- Created unique folder for this run: {shared_folder} ---")
 
     # Save the config to the shared folder for reproducibility
     save_config_to_shared_folder(config, config_path, shared_folder, "full_system")

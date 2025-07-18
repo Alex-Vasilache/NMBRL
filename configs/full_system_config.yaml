@@ -4,6 +4,8 @@ global:
   run_folder_prefix: "runs"
   env_type: "dmc" # "dmc" or "physical"
   device: "auto" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
+  checkpoint_path: completed_runs/20250717_124546  # Path to checkpoint folder to load from (creates new run in different folder)
+  use_existing_scalers: true  # Whether to use existing scalers from checkpoint or create new ones
   
 # TensorBoard logging configuration
 tensorboard:
@@ -149,7 +151,7 @@ dreamer_agent_trainer:
   units: 32               # Number of neurons in each layer # todo 32-64
 
   # Logging
-  save_frequency: 1000  # Save models every N episodes (None to disable)
+  save_frequency: 100  # Save models every N episodes (None to disable)
   eval_frequency: 200  # Evaluate every N episodes (None to disable)
   print_frequency: 100  # Print every N episodes (None to disable)
 

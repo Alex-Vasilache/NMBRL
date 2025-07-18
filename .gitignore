@@ -25,3 +25,6 @@ completed_runs/*
 output/*
 utils/visualize_agent.py
 world_model_visualization*
+test_runs/*
+*__pycache__/*
+*.pyc

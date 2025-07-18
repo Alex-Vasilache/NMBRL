@@ -271,6 +271,10 @@ class PhysicalCartPoleWrapper(gym.Env):
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 
+        # obs is angle, angle_vel, cos_angle, sin_angle, cart_pos, cart_vel
+        # should be pos, cos, sin, vel, angle_vel
+        obs = np.array([obs[4], obs[2], obs[3], obs[5], obs[1]])
+
         # Add info about stopping due to window closure
         if hasattr(self.env, "cartpole_rl") and hasattr(
             self.env.cartpole_rl, "should_stop"
@@ -294,7 +298,11 @@ class PhysicalCartPoleWrapper(gym.Env):
 
         self.prev_action = [0.0]
 
-        return self.env.reset(seed=seed, options=options)
+        obs = self.env.reset(seed=seed, options=options)
+        # obs is angle, angle_vel, cos_angle, sin_angle, cart_pos, cart_vel
+        # should be pos, cos, sin, vel, angle_vel
+        obs = np.array([obs[4], obs[2], obs[3], obs[5], obs[1]])
+        return obs
 
     def render(self):
         return self.env.render()

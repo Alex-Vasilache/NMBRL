@@ -221,6 +221,12 @@ class EvoAgent:
             )
             agent = cls(config, env, tensorboard_log=temp_log_dir)
 
+            # Determine the target device for loading
+            from utils.tools import resolve_device
+
+            target_device = resolve_device("global", config["global"])
+            print(f"[EVO-AGENT] Loading model to device: {target_device}")
+
             # Load the search distribution
             search_dist_path = os.path.join(temp_dir, "search_dist.save")
             import joblib
@@ -237,9 +243,11 @@ class EvoAgent:
             agent.info = training_info["info"]
             agent.args.time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Create test task for prediction
+            # Create test task for prediction with proper device mapping
             test_args = dotdict(args_dict.copy())
-            test_args.device = agent.config["global"]["device"]
+            test_args.device = (
+                target_device  # Use resolved device instead of config device
+            )
             test_args.test = True
             test_args.time = agent.args.time
             test_args.random_seed = 99

@@ -355,17 +355,21 @@ class DreamerACAgent:
             )
             agent = cls(global_config, env, tensorboard_log=temp_log_dir)
 
-            # Load actor model
+            # Always use CPU for loading (same as visualization script with --force-cpu)
+            map_location = "cpu"
+            print(f"[DREAMER-AGENT] Loading model to device: {map_location}")
+
+            # Load actor model with simple approach (same as visualization script)
             actor_path = os.path.join(temp_dir, "actor.pth")
             actor_data = torch.load(
-                actor_path, map_location=config["device"], weights_only=False
+                actor_path, map_location=map_location, weights_only=False
             )
             agent.agent.actor.load_state_dict(actor_data["model_state_dict"])
 
-            # Load critic model
+            # Load critic model with simple approach
             critic_path = os.path.join(temp_dir, "critic.pth")
             critic_data = torch.load(
-                critic_path, map_location=config["device"], weights_only=False
+                critic_path, map_location=map_location, weights_only=False
             )
             agent.agent.critic.load_state_dict(critic_data["model_state_dict"])
 
@@ -374,11 +378,10 @@ class DreamerACAgent:
             agent.episode_lengths = training_info.get("episode_lengths", [])
             agent.training_losses = training_info.get("training_losses", [])
 
-            # Set to evaluation mode
+            # Set models to eval mode
             agent.agent.actor.eval()
             agent.agent.critic.eval()
 
-            # print(f"DREAMER agent loaded from: {path}")
             return agent
 
     def close_tensorboard(self):
@@ -426,9 +429,7 @@ class DreamerACAgent:
                         next_state, reward, terminated, info = step_result[:4]
                         truncated = False
                     elif step_len == 5:
-                        next_state, reward, terminated, truncated, info = step_result[
-                            :5
-                        ]
+                        next_state, reward, terminated, truncated, info = step_result
                     else:
                         raise ValueError(
                             f"Unexpected step return format: {step_len} elements"
@@ -534,12 +535,14 @@ class DreamerACAgent:
         save_frequency = self.config.get("save_frequency")  # Save every N episodes
         eval_frequency = self.config.get("eval_frequency")  # Evaluate every N episodes
         print_frequency = self.config.get("print_frequency")  # Print every N episodes
-        self.save_dir = os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(self.tb_log_dir)))
-            ),
-            "checkpoints",
-        )
+        # Only set save_dir if it hasn't been set already (e.g., when loaded from checkpoint)
+        if not hasattr(self, "save_dir") or self.save_dir is None:
+            self.save_dir = os.path.join(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(self.tb_log_dir)))
+                ),
+                "checkpoints",
+            )
         os.makedirs(self.save_dir, exist_ok=True)
         self.eval_env = None
 
@@ -562,9 +565,18 @@ class DreamerACAgent:
                     states, dtype=torch.float32, device=self.config["device"]
                 )
                 actions = self.agent.get_action(states)
-                next_states, rewards, terminated, info = self.env.step(
-                    actions.cpu().detach().numpy()
-                )
+                step_result = self.env.step(actions.cpu().detach().numpy())
+                # Handle different return formats from step
+                step_len = len(step_result)
+                if step_len == 4:
+                    next_states, rewards, terminated, info = step_result[:4]
+                    truncated = False
+                elif step_len == 5:
+                    next_states, rewards, terminated, truncated, info = step_result[:5]
+                else:
+                    raise ValueError(
+                        f"Unexpected step return format: {step_len} elements"
+                    )
                 self.store_trajectory(
                     states,
                     actions,

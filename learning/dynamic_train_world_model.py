@@ -23,6 +23,7 @@ from utils.tools import (
 )
 from sklearn.preprocessing import MinMaxScaler
 import joblib
+from typing import Optional
 
 
 def train_model(
@@ -33,7 +34,7 @@ def train_model(
     stop_event=None,
     writer=None,
     global_step=0,
-    model_save_path=None,
+    model_save_path: Optional[str] = None,
 ):
     """
     Train a PyTorch model that maps vectors to vectors.
@@ -46,6 +47,7 @@ def train_model(
     - stop_event: A threading.Event to signal interruption from another thread.
     - writer: TensorBoard SummaryWriter for logging.
     - global_step: Global step counter for TensorBoard logging.
+    - model_save_path: Path where to save the model and scalers.
 
     Returns:
     - train_losses: List of training losses.
@@ -92,45 +94,81 @@ def train_model(
         )
 
         if trainer_config["use_scalers"]:
-            state_scaler = MinMaxScaler(feature_range=(-3, 3))
-            action_scaler = MinMaxScaler(feature_range=(-3, 3))
-            reward_scaler = MinMaxScaler(feature_range=(-3, 3))
+            # Check if we should use existing scalers or create new ones
+            use_existing_scalers = config["global"].get("use_existing_scalers", True)
 
-            initial_actions = torch.tensor(
-                dataset[0][:, model.state_size :], dtype=torch.float32
-            )
-            reward_range = [[0.0], [1.0]]
+            if use_existing_scalers:
+                # Check if scaler files exist in the model directory
+                model_dir = os.path.dirname(model_save_path) if model_save_path else "."
+                state_scaler_path = os.path.join(model_dir, "state_scaler.joblib")
+                action_scaler_path = os.path.join(model_dir, "action_scaler.joblib")
+                reward_scaler_path = os.path.join(model_dir, "reward_scaler.joblib")
 
-            max_state = np.maximum(
-                np.abs(new_init_states.cpu().numpy().min(axis=0)),
-                np.abs(new_init_states.cpu().numpy().max(axis=0)),
-            )
-            min_state = -max_state
-            max_action = np.maximum(
-                np.abs(initial_actions.cpu().numpy().min(axis=0)),
-                np.abs(initial_actions.cpu().numpy().max(axis=0)),
-            )
-            min_action = -max_action
+                if (
+                    os.path.exists(state_scaler_path)
+                    and os.path.exists(action_scaler_path)
+                    and os.path.exists(reward_scaler_path)
+                ):
+                    print("[TRAINER] Loading existing scalers from checkpoint")
+                    state_scaler = joblib.load(state_scaler_path)
+                    action_scaler = joblib.load(action_scaler_path)
+                    reward_scaler = joblib.load(reward_scaler_path)
+                    model.set_scalers(state_scaler, action_scaler, reward_scaler)
+                else:
+                    print("[TRAINER] Scaler files not found, creating new scalers")
+                    create_new_scalers = True
+            else:
+                print("[TRAINER] Creating new scalers (use_existing_scalers=False)")
+                create_new_scalers = True
 
-            state_scaler.fit([min_state, max_state])
-            action_scaler.fit([min_action, max_action])
-            reward_scaler.fit(reward_range)
+            # Create new scalers if needed
+            if not use_existing_scalers or "create_new_scalers" in locals():
+                state_scaler = MinMaxScaler(feature_range=(-3, 3))
+                action_scaler = MinMaxScaler(feature_range=(-3, 3))
+                reward_scaler = MinMaxScaler(feature_range=(-3, 3))
 
-            model.set_scalers(state_scaler, action_scaler, reward_scaler)
+                initial_actions = torch.tensor(
+                    dataset[0][:, model.state_size :], dtype=torch.float32
+                )
+                reward_range = [[0.0], [1.0]]
 
-            # save scalers
-            joblib.dump(
-                state_scaler,
-                os.path.join(os.path.dirname(model_save_path), "state_scaler.joblib"),
-            )
-            joblib.dump(
-                action_scaler,
-                os.path.join(os.path.dirname(model_save_path), "action_scaler.joblib"),
-            )
-            joblib.dump(
-                reward_scaler,
-                os.path.join(os.path.dirname(model_save_path), "reward_scaler.joblib"),
-            )
+                max_state = np.maximum(
+                    np.abs(new_init_states.cpu().numpy().min(axis=0)),
+                    np.abs(new_init_states.cpu().numpy().max(axis=0)),
+                )
+                min_state = -max_state
+                max_action = np.maximum(
+                    np.abs(initial_actions.cpu().numpy().min(axis=0)),
+                    np.abs(initial_actions.cpu().numpy().max(axis=0)),
+                )
+                min_action = -max_action
+
+                state_scaler.fit([min_state, max_state])
+                action_scaler.fit([min_action, max_action])
+                reward_scaler.fit(reward_range)
+
+                model.set_scalers(state_scaler, action_scaler, reward_scaler)
+
+                # save scalers
+                if model_save_path is not None:
+                    joblib.dump(
+                        state_scaler,
+                        os.path.join(
+                            os.path.dirname(model_save_path), "state_scaler.joblib"
+                        ),
+                    )
+                    joblib.dump(
+                        action_scaler,
+                        os.path.join(
+                            os.path.dirname(model_save_path), "action_scaler.joblib"
+                        ),
+                    )
+                    joblib.dump(
+                        reward_scaler,
+                        os.path.join(
+                            os.path.dirname(model_save_path), "reward_scaler.joblib"
+                        ),
+                    )
 
     # Unpack dataset
     X, y = dataset
@@ -607,6 +645,32 @@ def main():
         state_size=state_size,
         action_size=action_size,
     )
+
+    # Check if we should load from a checkpoint
+    if os.path.exists(model_save_path):
+        print(f"[TRAINER] Loading existing model from checkpoint: {model_save_path}")
+        try:
+            model = torch.load(
+                model_save_path,
+                map_location=next(model.parameters()).device,
+                weights_only=False,
+            )
+            print("[TRAINER] Successfully loaded model from checkpoint")
+
+            # Check if we should use existing scalers
+            use_existing_scalers = config["global"].get("use_existing_scalers", True)
+            if use_existing_scalers:
+                print("[TRAINER] Loading existing scalers from checkpoint")
+                # The scalers will be loaded by the model loading process
+                # since they are saved with the model
+            else:
+                print("[TRAINER] Will create new scalers (use_existing_scalers=False)")
+
+        except Exception as e:
+            print(f"[TRAINER] Warning: Failed to load model from checkpoint: {e}")
+            print("[TRAINER] Starting with fresh model")
+    else:
+        print("[TRAINER] No existing model found, starting with fresh model")
 
     # --- Setup for Threaded Training Cycle ---
     stop_training_event = threading.Event()

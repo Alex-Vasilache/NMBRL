@@ -3,6 +3,7 @@ import threading
 import numpy as np
 from stable_baselines3.common.callbacks import CallbackList
 import joblib
+from utils.tools import resolve_device
 
 MAX_ACTION_CHANGE = 0.4
 MAX_ACTION_SCALE = 0.7
@@ -157,12 +158,61 @@ class ActorWrapper:
         if not model_files:
             return None
 
-        latest_model_file = max(
-            model_files,
-            key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
-        )
-        latest_model_path = os.path.join(checkpoints_dir, latest_model_file)
+        # Determine target device to decide which model version to prefer
+        target_device = resolve_device("global", self.config["global"])
 
+        # If target device is CPU, prefer _cpu versions but fall back to regular files
+        if target_device == "cpu":
+            cpu_files = [f for f in model_files if f.endswith("_cpu.zip")]
+            regular_files = [f for f in model_files if not f.endswith("_cpu.zip")]
+
+            # If we have CPU files, use the latest one
+            if cpu_files:
+                latest_model_file = max(
+                    cpu_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+            # Otherwise, use the latest regular file
+            elif regular_files:
+                latest_model_file = max(
+                    regular_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+            # Fall back to any file if no files found
+            else:
+                latest_model_file = max(
+                    model_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+        else:
+            # For non-CPU devices, prefer original files over _cpu versions
+            original_files = [f for f in model_files if not f.endswith("_cpu.zip")]
+            if original_files:
+                # Use the latest original file
+                latest_model_file = max(
+                    original_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+            else:
+                # Fall back to any file if no original files found
+                latest_model_file = max(
+                    model_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+
+        # Special handling for "old_" prefixed files - prefer non-old files
+        # This ensures newly created checkpoints are preferred over copied old ones
+        if "old_" in latest_model_file:
+            # Look for non-old files with the same pattern
+            non_old_files = [f for f in model_files if not f.startswith("old_")]
+            if non_old_files:
+                # Use the latest non-old file instead
+                latest_model_file = max(
+                    non_old_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+
+        latest_model_path = os.path.join(checkpoints_dir, latest_model_file)
         return latest_model_path
 
     def _check_and_load_new_model(self):
@@ -179,18 +229,100 @@ class ActorWrapper:
 
                 # Load the new actor model
                 print(f"[ACTOR-WRAPPER] Loading new {self.agent_type} actor model...")
+
+                # Determine the target device for loading
+                target_device = resolve_device("global", self.config["global"])
+                print(f"[ACTOR-WRAPPER] Loading model to device: {target_device}")
+
                 if self.agent_type == "PPO":
                     from stable_baselines3 import PPO
 
-                    new_model = PPO.load(new_model_path)
+                    new_model = PPO.load(new_model_path, device=target_device)
                 elif self.agent_type == "SAC":
                     from stable_baselines3 import SAC
 
-                    new_model = SAC.load(new_model_path)
+                    new_model = SAC.load(new_model_path, device=target_device)
                 elif self.agent_type == "DREAMER":
                     from agents.dreamer_ac_agent import DreamerACAgent
 
+                    # Patch DreamerACAgent.load to support force-cpu (same as visualize_agent.py)
+                    import types
+                    from agents import dreamer_ac_agent as dreamer_mod
+
+                    orig_load = dreamer_mod.DreamerACAgent.load
+
+                    def patched_load(path, env=None, force_cpu=False):
+                        import torch
+                        import zipfile, os, tempfile, pickle
+                        from datetime import datetime
+
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            with zipfile.ZipFile(path, "r") as zipf:
+                                zipf.extractall(temp_dir)
+                            training_info_path = os.path.join(
+                                temp_dir, "training_info.pkl"
+                            )
+                            with open(training_info_path, "rb") as f:
+                                training_info = pickle.load(f)
+                            config = training_info["config"]
+                            global_config = training_info["global_config"]
+                            if force_cpu:
+                                config["device"] = "cpu"
+                                global_config["device"] = "cpu"
+                            temp_log_dir = os.path.join(
+                                tempfile.gettempdir(),
+                                f"dreamer_load_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                            )
+                            agent = dreamer_mod.DreamerACAgent(
+                                global_config, env, tensorboard_log=temp_log_dir
+                            )
+                            # Always use CPU if forced, else use config["device"]
+                            map_location = "cpu" if force_cpu else config["device"]
+                            actor_path = os.path.join(temp_dir, "actor.pth")
+                            actor_data = torch.load(
+                                actor_path,
+                                map_location=map_location,
+                                weights_only=False,
+                            )
+                            agent.agent.actor.load_state_dict(
+                                actor_data["model_state_dict"]
+                            )
+                            critic_path = os.path.join(temp_dir, "critic.pth")
+                            critic_data = torch.load(
+                                critic_path,
+                                map_location=map_location,
+                                weights_only=False,
+                            )
+                            agent.agent.critic.load_state_dict(
+                                critic_data["model_state_dict"]
+                            )
+                            agent.episode_rewards = training_info.get(
+                                "episode_rewards", []
+                            )
+                            agent.episode_lengths = training_info.get(
+                                "episode_lengths", []
+                            )
+                            agent.training_losses = training_info.get(
+                                "training_losses", []
+                            )
+                            agent.agent.actor.eval()
+                            agent.agent.critic.eval()
+                            return agent
+
+                    # Determine if we should force CPU based on target device
+                    force_cpu = target_device == "cpu"
+
+                    dreamer_mod.DreamerACAgent.load = staticmethod(
+                        lambda path, env=None: patched_load(
+                            path, env, force_cpu=force_cpu
+                        )
+                    )
+
+                    # Use the patched load method
                     new_model = DreamerACAgent.load(new_model_path, env=self.env)
+
+                    # Restore original method
+                    dreamer_mod.DreamerACAgent.load = orig_load
 
                 elif self.agent_type == "EVO":
                     from agents.evo_agent import EvoAgent
@@ -231,6 +363,8 @@ class ActorWrapper:
 
         except Exception as e:
             print(f"[ACTOR-WRAPPER] Error loading actor: {e}. Using previous actor.")
+            # Don't raise the exception, just continue with previous actor
+            return
 
     def _model_watcher(self):
         """Periodically calls the model checker."""
