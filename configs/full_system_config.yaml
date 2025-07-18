@@ -2,10 +2,11 @@
 global:
   seed: 41
   run_folder_prefix: "runs"
-  env_type: "dmc" # "dmc" or "physical"
+  env_type: "physical" # "dmc" or "physical"
   device: "auto" # "auto", "cuda", "cpu" - auto will use cuda if available, otherwise cpu
   checkpoint_path: completed_runs/20250717_124546  # Path to checkpoint folder to load from (creates new run in different folder)
   use_existing_scalers: true  # Whether to use existing scalers from checkpoint or create new ones
+  load_buffer_from_checkpoint: false  # If false, do not load buffer.pkl from checkpoint and clear valid_init_state in world model
   
 # TensorBoard logging configuration
 tensorboard:
@@ -24,7 +25,11 @@ data_generator:
   actor_check_interval_seconds: 1
   buffer_write_interval_seconds: 1
   dt_simulation: 0.02 # todo integrate into the sim
-  render_enabled: true  # Set to false for headless environments, true for local development
+  render_enabled: false  # Set to false for headless environments, true for local development
+  # New options for single model and best agent tracking
+  use_single_model: true  # If true, loads one model at start and doesn't switch during generation
+  track_best_agent: true  # If true, tracks best agent performance and copies checkpoints
+  best_agent_checkpoint_name: "best_agent.zip"  # Name for the best agent checkpoint file
 
 # Configuration for learning/dynamic_train_world_model.py
 world_model_trainer:

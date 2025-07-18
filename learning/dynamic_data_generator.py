@@ -8,6 +8,7 @@ import queue  # For queue.Empty exception
 import argparse
 import yaml
 import time
+import shutil
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 from agents.actor_wrapper import ActorWrapper
@@ -55,6 +56,110 @@ def buffer_writer_process(stop_event, data_queue, buffer_path: str, write_interv
     write_data()
 
 
+def load_single_model(shared_folder: str, config: dict, env):
+    """
+    Load a single model at the start of the generator run.
+    Returns the loaded model and state scaler.
+    """
+    print("[GENERATOR] Loading single model for this generator run...")
+
+    # Create a temporary ActorWrapper to load the model
+    temp_actor_wrapper = ActorWrapper(
+        env=env, config=config, training=False, shared_folder=shared_folder
+    )
+
+    # Wait a bit for any initial model to be available
+    time.sleep(2)
+
+    # Get the current model
+    model, state_scaler = temp_actor_wrapper.get_model()
+
+    # Close the wrapper to stop the background thread
+    temp_actor_wrapper.close()
+
+    print("[GENERATOR] Single model loaded successfully")
+    return model, state_scaler
+
+
+def track_best_agent(episode_reward: float, shared_folder: str, config: dict):
+    """
+    Track the best agent performance and copy checkpoint if it's a new best.
+    Returns True if this was a new best agent.
+    """
+    best_score_file = os.path.join(shared_folder, "best_agent_score.txt")
+    best_score = -float("inf")
+
+    # Get checkpoint name from config
+    best_checkpoint_name = config["data_generator"].get(
+        "best_agent_checkpoint_name", "best_agent.zip"
+    )
+
+    # Load current best score if it exists
+    if os.path.exists(best_score_file):
+        try:
+            with open(best_score_file, "r") as f:
+                best_score = float(f.read().strip())
+        except (ValueError, IOError):
+            print("[GENERATOR] Warning: Could not read best score file, starting fresh")
+            best_score = -float("inf")
+
+    # Check if this is a new best
+    if episode_reward > best_score:
+        print(
+            f"[GENERATOR] NEW BEST AGENT! Score: {episode_reward:.2f} (previous best: {best_score:.2f})"
+        )
+
+        # Update best score file
+        with open(best_score_file, "w") as f:
+            f.write(f"{episode_reward}")
+
+        # Find the latest checkpoint to copy
+        checkpoints_dir = os.path.join(shared_folder, "checkpoints")
+        if os.path.exists(checkpoints_dir):
+            checkpoint_files = [
+                f for f in os.listdir(checkpoints_dir) if f.endswith(".zip")
+            ]
+            if checkpoint_files:
+                # Sort by creation time to get the latest
+                latest_checkpoint = max(
+                    checkpoint_files,
+                    key=lambda f: os.path.getctime(os.path.join(checkpoints_dir, f)),
+                )
+                latest_checkpoint_path = os.path.join(
+                    checkpoints_dir, latest_checkpoint
+                )
+
+                # Create best agent checkpoint
+                best_checkpoint_path = os.path.join(shared_folder, best_checkpoint_name)
+
+                try:
+                    shutil.copy2(latest_checkpoint_path, best_checkpoint_path)
+                    print(
+                        f"[GENERATOR] Copied best agent checkpoint: {latest_checkpoint} -> {best_checkpoint_name}"
+                    )
+
+                    # Log the best agent info
+                    best_agent_log_file = os.path.join(
+                        shared_folder, "best_agent_log.txt"
+                    )
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    with open(best_agent_log_file, "a") as f:
+                        f.write(
+                            f"{timestamp}: New best agent score: {episode_reward:.2f} (checkpoint: {latest_checkpoint})\n"
+                        )
+
+                    return True
+                except Exception as e:
+                    print(f"[GENERATOR] Error copying best agent checkpoint: {e}")
+
+        return True
+    else:
+        print(
+            f"[GENERATOR] Episode reward: {episode_reward:.2f} (best: {best_score:.2f})"
+        )
+        return False
+
+
 def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config: dict):
     # Setup TensorBoard logging
     tb_config = config.get("tensorboard", {})
@@ -76,20 +181,43 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
         from world_models.physical_cartpole_wrapper import (
             PhysicalCartpoleWrapper as wrapper,
         )
-    base_env = wrapper(
-        seed=config["global"]["seed"],
-        n_envs=1,
-        render_mode=(
-            "human" if config["data_generator"]["render_enabled"] else None
-        ),  # Explicitly set to None for headless environments
-        max_episode_steps=config["data_generator"]["max_episode_steps"],
-        dt_simulation=config["data_generator"]["dt_simulation"],
-    )
+    # Create environment with appropriate parameters based on type
+    if args.env_type == "dmc":
+        base_env = wrapper(
+            seed=config["global"]["seed"],
+            n_envs=1,
+            render_mode=(
+                "human" if config["data_generator"]["render_enabled"] else None
+            ),  # Explicitly set to None for headless environments
+            max_episode_steps=config["data_generator"]["max_episode_steps"],
+            dt_simulation=config["data_generator"]["dt_simulation"],
+        )
+    else:  # physical
+        base_env = wrapper(
+            seed=config["global"]["seed"],
+            n_envs=1,
+            render_mode=(
+                "human" if config["data_generator"]["render_enabled"] else None
+            ),  # Explicitly set to None for headless environments
+            max_episode_steps=config["data_generator"]["max_episode_steps"],
+        )
 
-    # Instantiate the actor wrapper
-    actor_wrapper = ActorWrapper(
-        env=base_env, config=config, training=False, shared_folder=shared_folder
-    )
+    # Load a single model for this generator run (if configured)
+    use_single_model = config["data_generator"].get("use_single_model", True)
+    if use_single_model:
+        actor_model, state_scaler = load_single_model(shared_folder, config, base_env)
+        print(
+            "[GENERATOR] Using single model mode - model will not switch during generation"
+        )
+    else:
+        # Fallback to original behavior (not recommended)
+        print("[GENERATOR] Using dynamic model switching mode (not recommended)")
+        actor_wrapper = ActorWrapper(
+            env=base_env, config=config, training=False, shared_folder=shared_folder
+        )
+        actor_model, state_scaler = actor_wrapper.get_model()
+        # Store reference for cleanup
+        cleanup_actor_wrapper = actor_wrapper
 
     # Initialize state and data buffers from the initial environment
     env = base_env
@@ -113,8 +241,8 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                 stop_event.set()
                 continue
 
-            # Get the latest actor and environment from the wrapper
-            actor_model, state_scaler = actor_wrapper.get_model()
+            # Use the single loaded model (no more switching)
+            # actor_model, state_scaler = actor_wrapper.get_model()  # REMOVED
 
             # Extract state from vectorized environment (first and only environment)
             # For single environment, handle vectorized environment observation format
@@ -190,11 +318,26 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
                     f"[GENERATOR] Episode {episode_count+1} finished. Reward: {episode_reward}, Length: {episode_length}"
                 )
 
+                # Track best agent performance (if configured)
+                track_best = config["data_generator"].get("track_best_agent", True)
+                if track_best:
+                    is_new_best = track_best_agent(
+                        episode_reward, shared_folder, config
+                    )
+                else:
+                    is_new_best = False
+
                 # Log episode statistics to TensorBoard
                 writer.add_scalar(
                     "DataGen/Episode_Reward", episode_reward, episode_count
                 )
                 writer.add_scalar("DataGen/Total_Steps", total_steps, episode_count)
+
+                # Log best agent tracking
+                if is_new_best:
+                    writer.add_scalar(
+                        "DataGen/New_Best_Score", episode_reward, episode_count
+                    )
 
                 state = env.reset()
                 episode_reward = 0
@@ -216,8 +359,9 @@ def main(stop_event, data_queue, shared_folder: str, stop_file_path: str, config
 
             offload_env_data(data_queue, inp_data, outp_data)
     finally:
-        # Ensure the actor wrapper's thread is cleaned up
-        actor_wrapper.close()
+        # Clean up actor wrapper if it exists (for fallback mode)
+        if "cleanup_actor_wrapper" in locals():
+            cleanup_actor_wrapper.close()
         # Close TensorBoard writer
         writer.close()
         print(f"[GENERATOR] TensorBoard logs saved to: {tb_log_dir}")

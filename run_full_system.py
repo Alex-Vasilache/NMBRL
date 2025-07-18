@@ -65,8 +65,8 @@ def control_stream_watcher(identifier, stream):
                             f"[{identifier}] *** DETECTED FIRMWARE CONTROLLER: '{part_clean}' - SENDING SHIFT+K ***"
                         )
                         try:
-                            keyboard.send("k")
-                            keyboard.send("shift+k")
+                            # keyboard.send("k")
+                            # keyboard.send("shift+k")
                             print(f"[{identifier}] Shift+K sent successfully")
                         except Exception as e:
                             print(f"[{identifier}] Error sending keystroke: {e}")
@@ -99,6 +99,10 @@ def run_system():
 
     # Check if we should load from a checkpoint
     checkpoint_path = config["global"].get("checkpoint_path")
+    # New parameter: whether to load buffer from checkpoint
+    load_buffer_from_checkpoint = config["global"].get(
+        "load_buffer_from_checkpoint", True
+    )
     if checkpoint_path:
         print(f"--- Loading from checkpoint: {checkpoint_path} ---")
         if not os.path.exists(checkpoint_path):
@@ -117,7 +121,9 @@ def run_system():
         # Copy relevant files from checkpoint to new folder
         import shutil
 
-        checkpoint_files_to_copy = ["model.pth", "buffer.pkl"]
+        checkpoint_files_to_copy = ["model.pth"]
+        if load_buffer_from_checkpoint:
+            checkpoint_files_to_copy.append("buffer.pkl")
         for file_name in checkpoint_files_to_copy:
             src_path = os.path.join(checkpoint_path, file_name)
             dst_path = os.path.join(shared_folder, file_name)
@@ -209,6 +215,26 @@ def run_system():
 
                 print(f"--- Copied {checkpoint_dir_name} from checkpoint ---")
 
+        # If not loading buffer, clear valid_init_state in the world model (if it exists)
+        if not load_buffer_from_checkpoint:
+            # Try to clear valid_init_state in the world model checkpoint
+            model_path = os.path.join(shared_folder, "model.pth")
+            if os.path.exists(model_path):
+                import torch
+
+                try:
+                    model = torch.load(model_path, map_location="cpu")
+                    if hasattr(model, "valid_init_state"):
+                        model.valid_init_state = None
+                        torch.save(model, model_path)
+                        print(
+                            "--- Cleared valid_init_state in loaded world model (model.pth) ---"
+                        )
+                except Exception as e:
+                    print(
+                        f"--- Warning: Could not clear valid_init_state in world model: {e}"
+                    )
+
     else:
         # 1. Create unique folder for the run
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -227,7 +253,7 @@ def run_system():
         state_size = 5
         action_size = 1
     elif config["global"]["env_type"] == "physical":
-        state_size = 6
+        state_size = 5
         action_size = 1
     else:
         raise ValueError(f"Invalid environment type: {config['global']['env_type']}")
@@ -317,21 +343,21 @@ def run_system():
     # Add control command for physical cartpole
     control_command = None
     control_cwd = None
-    if config["global"]["env_type"] == "physical":
-        control_cwd = os.path.join("environments", "physical-cartpole")
-        if os.name == "nt":  # Windows
-            control_command = [
-                "python",
-                "-u",  # Unbuffered stdout and stderr
-                "-B",  # Don't write .pyc files
-                os.path.join("Driver", "control.py"),
-            ]
-        else:  # Linux/Unix
-            control_command = [
-                "python",
-                "-m",  # Use module format for cross-platform compatibility
-                "Driver.control",  # Convert path to module format
-            ]
+    # if config["global"]["env_type"] == "physical":
+    #     control_cwd = os.path.join("environments", "physical-cartpole")
+    #     if os.name == "nt":  # Windows
+    #         control_command = [
+    #             "python",
+    #             "-u",  # Unbuffered stdout and stderr
+    #             "-B",  # Don't write .pyc files
+    #             os.path.join("Driver", "control.py"),
+    #         ]
+    #     else:  # Linux/Unix
+    #         control_command = [
+    #             "python",
+    #             "-m",  # Use module format for cross-platform compatibility
+    #             "Driver.control",  # Convert path to module format
+    #         ]
 
     generator_proc = None
     world_model_trainer_proc = None
@@ -357,34 +383,34 @@ def run_system():
         popen_kwargs["preexec_fn"] = os.setsid
 
     try:
-        # 2. Start control process first if using physical cartpole
-        if control_command is not None:
-            print("\n--- Starting Physical Cartpole Control Script ---")
-            print(f"Command: {' '.join(control_command)}")
-            print(f"Working directory: {control_cwd}")
+        #     # 2. Start control process first if using physical cartpole
+        #     if control_command is not None:
+        #         print("\n--- Starting Physical Cartpole Control Script ---")
+        #         print(f"Command: {' '.join(control_command)}")
+        #         print(f"Working directory: {control_cwd}")
 
-            # Create a copy of popen_kwargs and add the working directory
-            control_popen_kwargs = popen_kwargs.copy()
-            control_popen_kwargs["cwd"] = control_cwd
+        #         # Create a copy of popen_kwargs and add the working directory
+        #         control_popen_kwargs = popen_kwargs.copy()
+        #         control_popen_kwargs["cwd"] = control_cwd
 
-            try:
-                control_proc = subprocess.Popen(control_command, **control_popen_kwargs)
-                print(f"Control process started with PID: {control_proc.pid}")
+        #         try:
+        #             control_proc = subprocess.Popen(control_command, **control_popen_kwargs)
+        #             print(f"Control process started with PID: {control_proc.pid}")
 
-                # Give control script a moment to initialize
-                time.sleep(2)
+        #             # Give control script a moment to initialize
+        #             time.sleep(2)
 
-                # Check if process is still running
-                if control_proc.poll() is None:
-                    print("Control process is running")
-                else:
-                    print(
-                        f"WARNING: Control process exited with code: {control_proc.returncode}"
-                    )
+        #             # Check if process is still running
+        #             if control_proc.poll() is None:
+        #                 print("Control process is running")
+        #             else:
+        #                 print(
+        #                     f"WARNING: Control process exited with code: {control_proc.returncode}"
+        #                 )
 
-            except Exception as e:
-                print(f"ERROR: Failed to start control process: {e}")
-                control_proc = None
+        #         except Exception as e:
+        #             print(f"ERROR: Failed to start control process: {e}")
+        #             control_proc = None
 
         # 3. Start the other three processes
         print("\n--- Starting Data Generator ---")

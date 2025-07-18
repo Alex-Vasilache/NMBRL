@@ -46,17 +46,28 @@ from stable_baselines3.common.monitor import Monitor
 import sys
 import os
 
-MAX_ACTION_CHANGE = 0.3
-MAX_ACTION_SCALE = 0.8
+MAX_ACTION_CHANGE = 2.0
+MAX_ACTION_SCALE = 1.0
+
+# _high = np.array(
+#     [
+#         np.pi,  # θ
+#         np.inf,  # θ̇
+#         1.0,
+#         1.0,  # sin θ, cos θ
+#         0.2,  # x
+#         np.inf,  # ẋ
+#     ],
+#     dtype=np.float32,
+# )
 
 _high = np.array(
     [
-        np.pi,  # θ
-        np.inf,  # θ̇
-        1.0,
-        1.0,  # sin θ, cos θ
-        0.2,  # x
+        np.inf,  # x
+        np.inf,  # cos θ
+        np.inf,  # sin θ
         np.inf,  # ẋ
+        np.inf,  # θ̇
     ],
     dtype=np.float32,
 )
@@ -201,6 +212,8 @@ class PhysicalCartPoleWrapper(gym.Env):
             cartpole_type="remote",  # Use remote for physical cartpole
         )
 
+        self.env.observation_space = OBSERVATION_SPACE
+
         self.render_mode = render_mode
         self.max_episode_steps = max_episode_steps
 
@@ -298,11 +311,12 @@ class PhysicalCartPoleWrapper(gym.Env):
 
         self.prev_action = [0.0]
 
-        obs = self.env.reset(seed=seed, options=options)
+        obs, info = self.env.reset(seed=seed, options=options)
+        print(obs)
         # obs is angle, angle_vel, cos_angle, sin_angle, cart_pos, cart_vel
         # should be pos, cos, sin, vel, angle_vel
         obs = np.array([obs[4], obs[2], obs[3], obs[5], obs[1]])
-        return obs
+        return obs, info
 
     def render(self):
         return self.env.render()
